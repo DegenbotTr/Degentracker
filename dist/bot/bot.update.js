@@ -27,21 +27,20 @@ function mainMenuKeyboard() {
             ],
             [
                 { text: '💼 Portfolio', callback_data: 'menu_portfolio' },
-                { text: '� TX History', callback_data: 'menu_txhistory' },
+                { text: '📜 TX History', callback_data: 'menu_txhistory' },
             ],
             [
                 { text: '💲 Token Price', callback_data: 'menu_price' },
                 { text: '⚙️ Min Size', callback_data: 'menu_minsize' },
             ],
             [
-                { text: '� Stats', callback_data: 'menu_stats' },
+                { text: '📊 Stats', callback_data: 'menu_stats' },
                 { text: '❓ Help', callback_data: 'menu_help' },
             ],
         ],
     };
 }
 function walletKeyboard(address) {
-    const enc = encodeURIComponent(address);
     return {
         inline_keyboard: [
             [
@@ -55,35 +54,49 @@ function walletKeyboard(address) {
             [
                 { text: '� Solscan', url: `https://solscan.io/account/${address}` },
                 {
-                    text: '📈 DexScreener',
+                    text: '� DexScreener',
                     url: `https://dexscreener.com/solana/${address}`,
                 },
             ],
-            [{ text: '🔙 Main Menu', callback_data: 'menu_main' }],
+            [{ text: '◀️ Back to List', callback_data: 'menu_list' }],
         ],
     };
-}
-function tradeAlertKeyboard(address, tokenMint) {
-    const buttons = [
-        [
-            { text: '💼 Portfolio', callback_data: `wallet_portfolio:${address}` },
-            { text: '📜 TX History', callback_data: `wallet_txhistory:${address}` },
-        ],
-    ];
-    if (tokenMint) {
-        buttons.push([
-            { text: '📈 Chart', url: `https://dexscreener.com/solana/${tokenMint}` },
-            { text: '🪙 Token', url: `https://solscan.io/token/${tokenMint}` },
-        ]);
-    }
-    buttons.push([
-        { text: '👛 Wallet', url: `https://solscan.io/account/${address}` },
-    ]);
-    return { inline_keyboard: buttons };
 }
 let BotUpdate = class BotUpdate {
     constructor(solanaService) {
         this.solanaService = solanaService;
+    }
+    extractArg(ctx) {
+        const text = ctx.message?.text || '';
+        const parts = text.trim().split(/\s+/);
+        return parts[1] || null;
+    }
+    trackUser(ctx) {
+        const chatId = ctx.chat?.id;
+        if (!chatId)
+            return;
+        this.solanaService.trackUser(chatId, ctx.from?.username || '');
+    }
+    buildWalletListContent(chatId) {
+        const wallets = this.solanaService.getWatchedWallets(chatId);
+        const min = this.solanaService.getMinTradeSize(chatId);
+        const filterLine = min > 0 ? `\n⚙️ Min alert: <b>$${min}</b>` : '';
+        if (wallets.length === 0) {
+            return {
+                text: `� <b>No wallets watched yet</b>\n\nUse /watch to add one.`,
+                keyboard: mainMenuKeyboard(),
+            };
+        }
+        const buttons = wallets.map((w) => {
+            const short = `${w.address.slice(0, 6)}...${w.address.slice(-4)}`;
+            const btnLabel = w.label ? `🏷 ${w.label}  •  ${short}` : `👛 ${short}`;
+            return [{ text: btnLabel, callback_data: `wallet_open:${w.address}` }];
+        });
+        buttons.push([{ text: '� Main Menu', callback_data: 'menu_main' }]);
+        return {
+            text: `👁 <b>Watched Wallets</b> (${wallets.length})${filterLine}\n━━━━━━━━━━━━━━━━━━━━\nTap a wallet to manage it:`,
+            keyboard: { inline_keyboard: buttons },
+        };
     }
     async onStart(ctx) {
         this.trackUser(ctx);
@@ -94,18 +107,10 @@ let BotUpdate = class BotUpdate {
             `Choose an option below 👇`, { parse_mode: 'HTML', reply_markup: mainMenuKeyboard() });
     }
     async onHelp(ctx) {
-        await ctx.reply(`📖 <b>Commands</b>\n` +
-            `━━━━━━━━━━━━━━━━━━━━\n` +
-            `/watch — add a wallet to watch\n` +
-            `/unwatch — remove a wallet\n` +
-            `/list — show all watched wallets\n` +
-            `/label — name a wallet\n` +
-            `/portfolio — token breakdown & value\n` +
-            `/txhistory — last 10 transactions\n` +
-            `/price — check any token price\n` +
-            `/minsize — set minimum trade alert size\n` +
-            `/stats — bot usage stats\n` +
-            `/menu — show main menu`, { parse_mode: 'HTML' });
+        await ctx.reply(`📖 <b>Commands</b>\n━━━━━━━━━━━━━━━━━━━━\n` +
+            `/watch /unwatch /list /label\n` +
+            `/portfolio /txhistory /price\n` +
+            `/minsize /stats /menu`, { parse_mode: 'HTML' });
     }
     async onMenu(ctx) {
         await ctx.reply(`🏠 <b>Main Menu</b>`, {
@@ -144,10 +149,24 @@ let BotUpdate = class BotUpdate {
         await ctx.reply(`� <b>Remove Wallet</b>\n\nPaste the address to remove:\n\n${list}`, { parse_mode: 'HTML' });
     }
     async onList(ctx) {
-        await this.showWalletList(ctx);
+        const { text, keyboard } = this.buildWalletListContent(ctx.chat.id);
+        await ctx.reply(text, { parse_mode: 'HTML', reply_markup: keyboard });
     }
     async onLabel(ctx) {
-        await this.startLabelFlow(ctx);
+        const wallets = this.solanaService.getWatchedWallets(ctx.chat.id);
+        if (wallets.length === 0) {
+            await ctx.reply(`📭 No wallets to label. Use /watch first.`);
+            return;
+        }
+        pendingAction.set(ctx.chat.id, 'label_address');
+        const list = wallets
+            .map((w, i) => {
+            const short = `${w.address.slice(0, 6)}...${w.address.slice(-4)}`;
+            const name = w.label ? ` — <b>${w.label}</b>` : '';
+            return `${i + 1}. ${short}${name}\n   <code>${w.address}</code>`;
+        })
+            .join('\n\n');
+        await ctx.reply(`🏷 <b>Label a Wallet</b>\n\nPaste the address you want to name:\n\n${list}`, { parse_mode: 'HTML' });
     }
     async onPortfolio(ctx) {
         const address = this.extractArg(ctx);
@@ -174,7 +193,7 @@ let BotUpdate = class BotUpdate {
             return;
         }
         pendingAction.set(ctx.chat.id, 'price');
-        await ctx.reply(`💲 <b>Token Price</b>\n\nPaste a token mint address or symbol (e.g. <code>SOL</code>, <code>BONK</code>):`, { parse_mode: 'HTML' });
+        await ctx.reply(`� <b>Token Price</b>\n\nPaste a token mint address or symbol:`, { parse_mode: 'HTML' });
     }
     async onStats(ctx) {
         this.trackUser(ctx);
@@ -188,9 +207,7 @@ let BotUpdate = class BotUpdate {
         }
         const current = this.solanaService.getMinTradeSize(ctx.chat.id);
         pendingAction.set(ctx.chat.id, 'minsize');
-        await ctx.reply(`⚙️ <b>Minimum Alert Size</b>\n\n` +
-            `Current: <b>${current > 0 ? `$${current}` : 'All trades (no filter)'}</b>\n\n` +
-            `Enter a USD amount. Send <b>0</b> to receive all alerts.`, { parse_mode: 'HTML' });
+        await ctx.reply(`⚙️ <b>Minimum Alert Size</b>\n\nCurrent: <b>${current > 0 ? `$${current}` : 'All trades'}</b>\n\nEnter a USD amount or <b>0</b> for all:`, { parse_mode: 'HTML' });
     }
     async onMenuMain(ctx) {
         await ctx.answerCbQuery();
@@ -206,7 +223,16 @@ let BotUpdate = class BotUpdate {
     }
     async onMenuList(ctx) {
         await ctx.answerCbQuery();
-        await this.showWalletList(ctx);
+        const { text, keyboard } = this.buildWalletListContent(ctx.chat.id);
+        try {
+            await ctx.editMessageText(text, {
+                parse_mode: 'HTML',
+                reply_markup: keyboard,
+            });
+        }
+        catch {
+            await ctx.reply(text, { parse_mode: 'HTML', reply_markup: keyboard });
+        }
     }
     async onMenuPortfolio(ctx) {
         await ctx.answerCbQuery();
@@ -238,28 +264,33 @@ let BotUpdate = class BotUpdate {
         await ctx.reply(`📖 <b>Commands</b>\n━━━━━━━━━━━━━━━━━━━━\n` +
             `/watch /unwatch /list /label\n/portfolio /txhistory /price\n/minsize /stats /menu`, { parse_mode: 'HTML' });
     }
-    async onWalletPortfolio(ctx) {
+    async onWalletOpen(ctx) {
         await ctx.answerCbQuery();
         const address = ctx.match[1];
-        await this.showPortfolio(ctx, address);
+        const label = this.solanaService.getWalletLabel(ctx.chat.id, address);
+        const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
+        const name = label ? `🏷 <b>${label}</b>\n` : '';
+        await ctx.editMessageText(`${name}� <a href="https://solscan.io/account/${address}">${short}</a>\n<code>${address}</code>`, { parse_mode: 'HTML', reply_markup: walletKeyboard(address) });
+    }
+    async onWalletPortfolio(ctx) {
+        await ctx.answerCbQuery();
+        await this.showPortfolio(ctx, ctx.match[1]);
     }
     async onWalletTxHistory(ctx) {
         await ctx.answerCbQuery();
-        const address = ctx.match[1];
-        await this.showTxHistory(ctx, address);
+        await this.showTxHistory(ctx, ctx.match[1]);
     }
     async onWalletUnwatch(ctx) {
         await ctx.answerCbQuery();
-        const address = ctx.match[1];
-        await this.removeWallet(ctx, address);
+        await this.removeWallet(ctx, ctx.match[1]);
     }
     async onWalletLabel(ctx) {
         await ctx.answerCbQuery();
         const address = ctx.match[1];
         pendingLabelAddress.set(ctx.chat.id, address);
         pendingAction.set(ctx.chat.id, 'label_name');
-        const label = this.solanaService.getWalletLabel(ctx.chat.id, address);
-        const current = label ? ` (current: <b>${label}</b>)` : '';
+        const existing = this.solanaService.getWalletLabel(ctx.chat.id, address);
+        const current = existing ? ` (current: <b>${existing}</b>)` : '';
         await ctx.reply(`🏷 Enter a name for this wallet${current}:\n<code>${address}</code>`, { parse_mode: 'HTML' });
     }
     async onText(ctx, text) {
@@ -317,51 +348,6 @@ let BotUpdate = class BotUpdate {
             await ctx.reply(`✅ <b>Label saved</b>\n\n👛 ${short} is now called <b>${input}</b>`, { parse_mode: 'HTML' });
         }
     }
-    extractArg(ctx) {
-        const text = ctx.message?.text || '';
-        const parts = text.trim().split(/\s+/);
-        return parts[1] || null;
-    }
-    trackUser(ctx) {
-        const chatId = ctx.chat?.id;
-        if (!chatId)
-            return;
-        this.solanaService.trackUser(chatId, ctx.from?.username || '');
-    }
-    async showWalletList(ctx) {
-        const wallets = this.solanaService.getWatchedWallets(ctx.chat.id);
-        if (wallets.length === 0) {
-            await ctx.reply(`📭 <b>No wallets watched yet</b>\n\nUse /watch to add one.`, {
-                parse_mode: 'HTML',
-                reply_markup: mainMenuKeyboard(),
-            });
-            return;
-        }
-        const min = this.solanaService.getMinTradeSize(ctx.chat.id);
-        const filterLine = min > 0 ? `\n⚙️ Min alert: <b>$${min}</b>` : '';
-        await ctx.reply(`👁 <b>Watched Wallets</b> (${wallets.length})${filterLine}\n━━━━━━━━━━━━━━━━━━━━`, { parse_mode: 'HTML' });
-        for (const w of wallets) {
-            const short = `${w.address.slice(0, 6)}...${w.address.slice(-4)}`;
-            const name = w.label ? `🏷 <b>${w.label}</b>\n` : '';
-            await ctx.reply(`${name}👛 <a href="https://solscan.io/account/${w.address}">${short}</a>\n<code>${w.address}</code>`, { parse_mode: 'HTML', reply_markup: walletKeyboard(w.address) });
-        }
-    }
-    async startLabelFlow(ctx) {
-        const wallets = this.solanaService.getWatchedWallets(ctx.chat.id);
-        if (wallets.length === 0) {
-            await ctx.reply(`📭 You have no wallets to label.\nUse /watch to add one first.`);
-            return;
-        }
-        pendingAction.set(ctx.chat.id, 'label_address');
-        const list = wallets
-            .map((w, i) => {
-            const short = `${w.address.slice(0, 6)}...${w.address.slice(-4)}`;
-            const name = w.label ? ` — <b>${w.label}</b>` : '';
-            return `${i + 1}. ${short}${name}\n   <code>${w.address}</code>`;
-        })
-            .join('\n\n');
-        await ctx.reply(`🏷 <b>Label a Wallet</b>\n\nPaste the address you want to name:\n\n${list}`, { parse_mode: 'HTML' });
-    }
     async addWallet(ctx, address) {
         try {
             const chainErr = this.solanaService.chainErrorMessage(address);
@@ -378,7 +364,7 @@ let BotUpdate = class BotUpdate {
             await ctx.reply(`✅ <b>Wallet Added</b>\n━━━━━━━━━━━━━━━━━━━━\n` +
                 `👛 <a href="https://solscan.io/account/${address}">${short}</a>\n` +
                 `<code>${address}</code>\n\n` +
-                `You'll be notified on every buy and sell.`, { parse_mode: 'HTML', reply_markup: walletKeyboard(address) });
+                `You'll be notified on every buy and sell.\n💡 Use /label to give this wallet a name.`, { parse_mode: 'HTML', reply_markup: walletKeyboard(address) });
         }
         catch {
             await ctx.reply(`❌ Something went wrong. Please try again.`);
@@ -449,9 +435,6 @@ let BotUpdate = class BotUpdate {
         await ctx.reply(value === 0
             ? `✅ <b>Filter removed</b> — you'll receive all trade alerts.`
             : `✅ <b>Min alert size: $${value}</b>\n\nOnly trades above this value will notify you.`, { parse_mode: 'HTML', reply_markup: mainMenuKeyboard() });
-    }
-    getTradeAlertKeyboard(address, tokenMint) {
-        return tradeAlertKeyboard(address, tokenMint);
     }
 };
 exports.BotUpdate = BotUpdate;
@@ -602,6 +585,13 @@ __decorate([
     __metadata("design:paramtypes", [telegraf_1.Context]),
     __metadata("design:returntype", Promise)
 ], BotUpdate.prototype, "onMenuHelp", null);
+__decorate([
+    (0, nestjs_telegraf_1.Action)(/^wallet_open:(.+)$/),
+    __param(0, (0, nestjs_telegraf_1.Ctx)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [telegraf_1.Context]),
+    __metadata("design:returntype", Promise)
+], BotUpdate.prototype, "onWalletOpen", null);
 __decorate([
     (0, nestjs_telegraf_1.Action)(/^wallet_portfolio:(.+)$/),
     __param(0, (0, nestjs_telegraf_1.Ctx)()),

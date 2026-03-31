@@ -1,9 +1,11 @@
 import { Context } from 'telegraf';
-import { InlineKeyboardMarkup } from 'telegraf/types';
 import { SolanaService } from '../solana/solana.service';
 export declare class BotUpdate {
     private solanaService;
     constructor(solanaService: SolanaService);
+    private extractArg;
+    private trackUser;
+    private buildWalletListContent;
     onStart(ctx: Context): Promise<void>;
     onHelp(ctx: Context): Promise<void>;
     onMenu(ctx: Context): Promise<void>;
@@ -25,20 +27,16 @@ export declare class BotUpdate {
     onMenuMinSize(ctx: Context): Promise<void>;
     onMenuStats(ctx: Context): Promise<void>;
     onMenuHelp(ctx: Context): Promise<void>;
+    onWalletOpen(ctx: Context): Promise<void>;
     onWalletPortfolio(ctx: Context): Promise<void>;
     onWalletTxHistory(ctx: Context): Promise<void>;
     onWalletUnwatch(ctx: Context): Promise<void>;
     onWalletLabel(ctx: Context): Promise<void>;
     onText(ctx: Context, text: string): Promise<void>;
-    private extractArg;
-    private trackUser;
-    private showWalletList;
-    private startLabelFlow;
-    addWallet(ctx: Context, address: string): Promise<void>;
+    private addWallet;
     private removeWallet;
     private showPortfolio;
     private showTxHistory;
     private showPrice;
     private setMinSize;
-    getTradeAlertKeyboard(address: string, tokenMint: string): InlineKeyboardMarkup;
 }
