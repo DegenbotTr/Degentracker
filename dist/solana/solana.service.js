@@ -20,6 +20,8 @@ const web3_js_1 = require("@solana/web3.js");
 const nestjs_telegraf_1 = require("nestjs-telegraf");
 const telegraf_1 = require("telegraf");
 const minTradeSize = new Map();
+const allUsers = new Map();
+const startTime = new Date();
 let SolanaService = SolanaService_1 = class SolanaService {
     constructor(config, bot) {
         this.config = config;
@@ -49,7 +51,27 @@ let SolanaService = SolanaService_1 = class SolanaService {
             this.connection.removeOnLogsListener(subId).catch(() => { });
         });
     }
-    watchWallet(address, chatId) {
+    async validateWallet(address) {
+        try {
+            new web3_js_1.PublicKey(address);
+        }
+        catch {
+            return 'invalid_address';
+        }
+        try {
+            const accountInfo = await this.connection.getAccountInfo(new web3_js_1.PublicKey(address));
+            if (!accountInfo)
+                return 'valid';
+            const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+            if (accountInfo.owner.toBase58() === SYSTEM_PROGRAM)
+                return 'valid';
+            return 'not_wallet';
+        }
+        catch {
+            return 'valid';
+        }
+    }
+    async watchWallet(address, chatId) {
         try {
             new web3_js_1.PublicKey(address);
         }
@@ -98,12 +120,39 @@ let SolanaService = SolanaService_1 = class SolanaService {
     getMinTradeSize(chatId) {
         return minTradeSize.get(chatId) ?? 0;
     }
+    trackUser(chatId, username) {
+        const now = new Date();
+        if (allUsers.has(chatId)) {
+            allUsers.get(chatId).lastSeen = now;
+        }
+        else {
+            allUsers.set(chatId, { username, firstSeen: now, lastSeen: now });
+        }
+    }
+    getStats() {
+        const totalUsers = allUsers.size;
+        const totalWallets = this.watchedWallets.size;
+        const activeWatchers = new Set();
+        this.watchedWallets.forEach(({ chatIds }) => chatIds.forEach((id) => activeWatchers.add(id)));
+        const uptimeMs = Date.now() - startTime.getTime();
+        const hours = Math.floor(uptimeMs / 3600000);
+        const minutes = Math.floor((uptimeMs % 3600000) / 60000);
+        return [
+            `┌─────────────────────────────`,
+            `│ 📊 <b>BOT STATS</b>`,
+            `└─────────────────────────────\n`,
+            `👥 Total users: <b>${totalUsers}</b>`,
+            `👁 Active watchers: <b>${activeWatchers.size}</b>`,
+            `👛 Wallets being tracked: <b>${totalWallets}</b>`,
+            `⏱ Uptime: <b>${hours}h ${minutes}m</b>`,
+        ].join('\n');
+    }
     async getPortfolio(address) {
         try {
             new web3_js_1.PublicKey(address);
         }
         catch {
-            return '❌ Invalid wallet address.';
+            throw new Error('invalid_address');
         }
         const dasRes = await fetch(`https://mainnet.helius-rpc.com/?api-key=${this.apiKey}`, {
             method: 'POST',
@@ -134,7 +183,8 @@ let SolanaService = SolanaService_1 = class SolanaService {
         }
         const solBalance = (nativeBalance?.lamports ?? 0) / 1e9;
         const solUsd = solBalance * solPrice;
-        const tokens = items.filter((i) => i.interface === 'FungibleToken' && i.token_info?.balance > 0);
+        const tokens = items.filter((i) => (i.interface === 'FungibleToken' || i.interface === 'FungibleAsset') &&
+            (i.token_info?.balance ?? 0) > 0);
         let totalUsd = solUsd;
         const tokenData = tokens.map((token) => {
             const info = token.token_info;
@@ -184,7 +234,7 @@ let SolanaService = SolanaService_1 = class SolanaService {
             new web3_js_1.PublicKey(address);
         }
         catch {
-            return '❌ Invalid wallet address.';
+            throw new Error('invalid_address');
         }
         const sigsRes = await this.connection.getSignaturesForAddress(new web3_js_1.PublicKey(address), { limit: 10 });
         if (!sigsRes.length)

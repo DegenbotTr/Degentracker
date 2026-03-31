@@ -22,6 +22,7 @@ let BotUpdate = class BotUpdate {
         this.solanaService = solanaService;
     }
     async onStart(ctx) {
+        this.trackUser(ctx);
         await ctx.reply(`🚀 <b>Sol Wallet Watcher</b>\n` +
             `━━━━━━━━━━━━━━━━━━━━\n` +
             `Track any Solana wallet and get instant alerts on trades.\n\n` +
@@ -120,6 +121,11 @@ let BotUpdate = class BotUpdate {
         pendingAction.set(ctx.chat.id, 'price');
         await ctx.reply(`💲 <b>Token Price</b>\n\nPaste a token mint address or symbol (e.g. <code>SOL</code>, <code>BONK</code>):`, { parse_mode: 'HTML' });
     }
+    async onStats(ctx) {
+        this.trackUser(ctx);
+        const result = this.solanaService.getStats();
+        await ctx.reply(result, { parse_mode: 'HTML' });
+    }
     async onMinSize(ctx) {
         const arg = this.extractArg(ctx);
         if (arg) {
@@ -136,6 +142,7 @@ let BotUpdate = class BotUpdate {
         if (text.startsWith('/'))
             return;
         const chatId = ctx.chat.id;
+        this.trackUser(ctx);
         const action = pendingAction.get(chatId);
         if (!action)
             return;
@@ -159,17 +166,42 @@ let BotUpdate = class BotUpdate {
         const parts = text.trim().split(/\s+/);
         return parts[1] || null;
     }
-    async addWallet(ctx, address) {
-        const success = this.solanaService.watchWallet(address, ctx.chat.id);
-        if (!success) {
-            await ctx.reply(`❌ <b>Invalid address</b>\n\nCouldn't recognise that as a Solana wallet. Double-check and try again.`, { parse_mode: 'HTML' });
+    trackUser(ctx) {
+        const chatId = ctx.chat?.id;
+        if (!chatId)
             return;
+        const username = ctx.from?.username || '';
+        this.solanaService.trackUser(chatId, username);
+    }
+    async addWallet(ctx, address) {
+        try {
+            const loading = await ctx.reply('⏳ Validating address...');
+            const editMsg = async (text) => ctx.telegram.editMessageText(ctx.chat.id, loading.message_id, undefined, text, { parse_mode: 'HTML' });
+            const validation = await this.solanaService.validateWallet(address);
+            if (validation === 'invalid_address') {
+                await editMsg(`❌ <b>Invalid address</b>\n\nThat doesn't look like a valid Solana address. Double-check and try again.`);
+                return;
+            }
+            if (validation === 'not_wallet') {
+                await editMsg(`❌ <b>That's a token or contract address</b>\n\n` +
+                    `This bot only watches <b>wallet addresses</b>, not token mints or program accounts.\n\n` +
+                    `Paste the wallet address of the trader you want to track.`);
+                return;
+            }
+            const success = await this.solanaService.watchWallet(address, ctx.chat.id);
+            if (!success) {
+                await editMsg(`❌ <b>Could not add wallet</b>\n\nSomething went wrong. Please try again.`);
+                return;
+            }
+            const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
+            await editMsg(`✅ <b>Wallet Added</b>\n━━━━━━━━━━━━━━━━━━━━\n` +
+                `👛 <a href="https://solscan.io/account/${address}">${short}</a>\n` +
+                `<code>${address}</code>\n\n` +
+                `You'll be notified on every buy and sell.\nUse /minsize to filter small trades.`);
         }
-        const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
-        await ctx.reply(`✅ <b>Wallet Added</b>\n━━━━━━━━━━━━━━━━━━━━\n` +
-            `👛 <a href="https://solscan.io/account/${address}">${short}</a>\n` +
-            `<code>${address}</code>\n\n` +
-            `You'll be notified on every buy and sell.\nUse /minsize to filter small trades.`, { parse_mode: 'HTML' });
+        catch {
+            await ctx.reply(`❌ Something went wrong. Please try again.`);
+        }
     }
     async removeWallet(ctx, address) {
         const success = this.solanaService.unwatchWallet(address, ctx.chat.id);
@@ -182,18 +214,33 @@ let BotUpdate = class BotUpdate {
     }
     async showPortfolio(ctx, address) {
         const loading = await ctx.reply('⏳ Fetching portfolio data...');
-        const result = await this.solanaService.getPortfolio(address);
-        await ctx.telegram.editMessageText(ctx.chat.id, loading.message_id, undefined, result, { parse_mode: 'HTML' });
+        try {
+            const result = await this.solanaService.getPortfolio(address);
+            await ctx.telegram.editMessageText(ctx.chat.id, loading.message_id, undefined, result, { parse_mode: 'HTML' });
+        }
+        catch {
+            await ctx.telegram.editMessageText(ctx.chat.id, loading.message_id, undefined, `❌ <b>Failed to fetch portfolio</b>\n\nCould not load data for that address. Make sure it's a valid Solana wallet and try again.`, { parse_mode: 'HTML' });
+        }
     }
     async showTxHistory(ctx, address) {
         const loading = await ctx.reply('⏳ Loading transaction history...');
-        const result = await this.solanaService.getTxHistory(address);
-        await ctx.telegram.editMessageText(ctx.chat.id, loading.message_id, undefined, result, { parse_mode: 'HTML' });
+        try {
+            const result = await this.solanaService.getTxHistory(address);
+            await ctx.telegram.editMessageText(ctx.chat.id, loading.message_id, undefined, result, { parse_mode: 'HTML' });
+        }
+        catch {
+            await ctx.telegram.editMessageText(ctx.chat.id, loading.message_id, undefined, `❌ <b>Failed to load history</b>\n\nCould not fetch transactions for that address. Make sure it's a valid Solana wallet and try again.`, { parse_mode: 'HTML' });
+        }
     }
     async showPrice(ctx, mintOrSymbol) {
         const loading = await ctx.reply('⏳ Fetching price...');
-        const result = await this.solanaService.getTokenPrice(mintOrSymbol);
-        await ctx.telegram.editMessageText(ctx.chat.id, loading.message_id, undefined, result, { parse_mode: 'HTML' });
+        try {
+            const result = await this.solanaService.getTokenPrice(mintOrSymbol);
+            await ctx.telegram.editMessageText(ctx.chat.id, loading.message_id, undefined, result, { parse_mode: 'HTML' });
+        }
+        catch {
+            await ctx.telegram.editMessageText(ctx.chat.id, loading.message_id, undefined, `❌ <b>Failed to fetch price</b>\n\nCould not find price for <code>${mintOrSymbol}</code>.\n\nTry using the full mint address or a known symbol like <code>SOL</code>, <code>BONK</code>.`, { parse_mode: 'HTML' });
+        }
     }
     async setMinSize(ctx, input) {
         const value = parseFloat(input);
@@ -264,6 +311,13 @@ __decorate([
     __metadata("design:paramtypes", [telegraf_1.Context]),
     __metadata("design:returntype", Promise)
 ], BotUpdate.prototype, "onPrice", null);
+__decorate([
+    (0, nestjs_telegraf_1.Command)('stats'),
+    __param(0, (0, nestjs_telegraf_1.Ctx)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [telegraf_1.Context]),
+    __metadata("design:returntype", Promise)
+], BotUpdate.prototype, "onStats", null);
 __decorate([
     (0, nestjs_telegraf_1.Command)('minsize'),
     __param(0, (0, nestjs_telegraf_1.Ctx)()),

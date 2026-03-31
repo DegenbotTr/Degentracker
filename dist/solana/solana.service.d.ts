@@ -11,11 +11,14 @@ export declare class SolanaService implements OnModuleInit, OnModuleDestroy {
     constructor(config: ConfigService, bot: Telegraf);
     onModuleInit(): void;
     onModuleDestroy(): void;
-    watchWallet(address: string, chatId: number | null): boolean;
+    validateWallet(address: string): Promise<'valid' | 'invalid_address' | 'not_wallet'>;
+    watchWallet(address: string, chatId: number | null): Promise<boolean>;
     unwatchWallet(address: string, chatId: number): boolean;
     getWatchedWallets(chatId: number): string[];
     setMinTradeSize(chatId: number, usd: number): void;
     getMinTradeSize(chatId: number): number;
+    trackUser(chatId: number, username: string): void;
+    getStats(): string;
     getPortfolio(address: string): Promise<string>;
     getTxHistory(address: string): Promise<string>;
     getTokenPrice(mintOrSymbol: string): Promise<string>;

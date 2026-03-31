@@ -246,21 +246,51 @@ export class BotUpdate {
 
   private async addWallet(ctx: Context, address: string): Promise<void> {
     try {
-      const success = this.solanaService.watchWallet(address, ctx.chat.id);
-      if (!success) {
-        await ctx.reply(
-          `❌ <b>Invalid address</b>\n\nCouldn't recognise that as a Solana wallet. Double-check and try again.`,
+      const loading = await ctx.reply('⏳ Validating address...');
+      const editMsg = async (text: string) =>
+        ctx.telegram.editMessageText(
+          ctx.chat.id,
+          (loading as any).message_id,
+          undefined,
+          text,
           { parse_mode: 'HTML' },
+        );
+
+      const validation = await this.solanaService.validateWallet(address);
+
+      if (validation === 'invalid_address') {
+        await editMsg(
+          `❌ <b>Invalid address</b>\n\nThat doesn't look like a valid Solana address. Double-check and try again.`,
         );
         return;
       }
+
+      if (validation === 'not_wallet') {
+        await editMsg(
+          `❌ <b>That's a token or contract address</b>\n\n` +
+            `This bot only watches <b>wallet addresses</b>, not token mints or program accounts.\n\n` +
+            `Paste the wallet address of the trader you want to track.`,
+        );
+        return;
+      }
+
+      const success = await this.solanaService.watchWallet(
+        address,
+        ctx.chat.id,
+      );
+      if (!success) {
+        await editMsg(
+          `❌ <b>Could not add wallet</b>\n\nSomething went wrong. Please try again.`,
+        );
+        return;
+      }
+
       const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
-      await ctx.reply(
+      await editMsg(
         `✅ <b>Wallet Added</b>\n━━━━━━━━━━━━━━━━━━━━\n` +
           `👛 <a href="https://solscan.io/account/${address}">${short}</a>\n` +
           `<code>${address}</code>\n\n` +
           `You'll be notified on every buy and sell.\nUse /minsize to filter small trades.`,
-        { parse_mode: 'HTML' },
       );
     } catch {
       await ctx.reply(`❌ Something went wrong. Please try again.`);
@@ -284,38 +314,68 @@ export class BotUpdate {
 
   private async showPortfolio(ctx: Context, address: string): Promise<void> {
     const loading = await ctx.reply('⏳ Fetching portfolio data...');
-    const result = await this.solanaService.getPortfolio(address);
-    await ctx.telegram.editMessageText(
-      ctx.chat.id,
-      (loading as any).message_id,
-      undefined,
-      result,
-      { parse_mode: 'HTML' },
-    );
+    try {
+      const result = await this.solanaService.getPortfolio(address);
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        (loading as any).message_id,
+        undefined,
+        result,
+        { parse_mode: 'HTML' },
+      );
+    } catch {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        (loading as any).message_id,
+        undefined,
+        `❌ <b>Failed to fetch portfolio</b>\n\nCould not load data for that address. Make sure it's a valid Solana wallet and try again.`,
+        { parse_mode: 'HTML' },
+      );
+    }
   }
 
   private async showTxHistory(ctx: Context, address: string): Promise<void> {
     const loading = await ctx.reply('⏳ Loading transaction history...');
-    const result = await this.solanaService.getTxHistory(address);
-    await ctx.telegram.editMessageText(
-      ctx.chat.id,
-      (loading as any).message_id,
-      undefined,
-      result,
-      { parse_mode: 'HTML' },
-    );
+    try {
+      const result = await this.solanaService.getTxHistory(address);
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        (loading as any).message_id,
+        undefined,
+        result,
+        { parse_mode: 'HTML' },
+      );
+    } catch {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        (loading as any).message_id,
+        undefined,
+        `❌ <b>Failed to load history</b>\n\nCould not fetch transactions for that address. Make sure it's a valid Solana wallet and try again.`,
+        { parse_mode: 'HTML' },
+      );
+    }
   }
 
   private async showPrice(ctx: Context, mintOrSymbol: string): Promise<void> {
     const loading = await ctx.reply('⏳ Fetching price...');
-    const result = await this.solanaService.getTokenPrice(mintOrSymbol);
-    await ctx.telegram.editMessageText(
-      ctx.chat.id,
-      (loading as any).message_id,
-      undefined,
-      result,
-      { parse_mode: 'HTML' },
-    );
+    try {
+      const result = await this.solanaService.getTokenPrice(mintOrSymbol);
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        (loading as any).message_id,
+        undefined,
+        result,
+        { parse_mode: 'HTML' },
+      );
+    } catch {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        (loading as any).message_id,
+        undefined,
+        `❌ <b>Failed to fetch price</b>\n\nCould not find price for <code>${mintOrSymbol}</code>.\n\nTry using the full mint address or a known symbol like <code>SOL</code>, <code>BONK</code>.`,
+        { parse_mode: 'HTML' },
+      );
+    }
   }
 
   private async setMinSize(ctx: Context, input: string): Promise<void> {

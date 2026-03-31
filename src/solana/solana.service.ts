@@ -65,7 +65,36 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
 
   // ─── Wallet Watch ────────────────────────────────────────────────────────────
 
-  watchWallet(address: string, chatId: number | null): boolean {
+  async validateWallet(
+    address: string,
+  ): Promise<'valid' | 'invalid_address' | 'not_wallet'> {
+    try {
+      new PublicKey(address);
+    } catch {
+      return 'invalid_address';
+    }
+
+    try {
+      const accountInfo = await this.connection.getAccountInfo(
+        new PublicKey(address),
+      );
+
+      // Account doesn't exist yet — could be a new/empty wallet, allow it
+      if (!accountInfo) return 'valid';
+
+      // System Program owner = regular wallet
+      const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+      if (accountInfo.owner.toBase58() === SYSTEM_PROGRAM) return 'valid';
+
+      // Anything else is a program, token mint, or contract — reject it
+      return 'not_wallet';
+    } catch {
+      // RPC error — allow it rather than blocking the user
+      return 'valid';
+    }
+  }
+
+  async watchWallet(address: string, chatId: number | null): Promise<boolean> {
     try {
       new PublicKey(address);
     } catch {
@@ -162,7 +191,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     try {
       new PublicKey(address);
     } catch {
-      return '❌ Invalid wallet address.';
+      throw new Error('invalid_address');
     }
 
     const dasRes = await fetch(
@@ -279,7 +308,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     try {
       new PublicKey(address);
     } catch {
-      return '❌ Invalid wallet address.';
+      throw new Error('invalid_address');
     }
 
     const sigsRes = await this.connection.getSignaturesForAddress(

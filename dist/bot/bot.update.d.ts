@@ -11,9 +11,11 @@ export declare class BotUpdate {
     onPortfolio(ctx: Context): Promise<void>;
     onTxHistory(ctx: Context): Promise<void>;
     onPrice(ctx: Context): Promise<void>;
+    onStats(ctx: Context): Promise<void>;
     onMinSize(ctx: Context): Promise<void>;
     onText(ctx: Context, text: string): Promise<void>;
     private extractArg;
+    private trackUser;
     private addWallet;
     private removeWallet;
     private showPortfolio;
