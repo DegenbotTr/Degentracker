@@ -16,6 +16,13 @@ import { Telegraf } from 'telegraf';
 // Per-chat min trade size filter (USD), default 0 = all trades
 const minTradeSize = new Map<number, number>();
 
+// Track all users who have interacted with the bot
+const allUsers = new Map<
+  number,
+  { username: string; firstSeen: Date; lastSeen: Date }
+>();
+const startTime = new Date();
+
 @Injectable()
 export class SolanaService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SolanaService.name);
@@ -113,6 +120,60 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
 
   getMinTradeSize(chatId: number): number {
     return minTradeSize.get(chatId) ?? 0;
+  }
+
+  // ─── User Tracking ───────────────────────────────────────────────────────────
+
+  trackUser(chatId: number, username: string): void {
+    const now = new Date();
+    if (allUsers.has(chatId)) {
+      allUsers.get(chatId).lastSeen = now;
+    } else {
+      allUsers.set(chatId, { username, firstSeen: now, lastSeen: now });
+    }
+  }
+
+  getStats(): string {
+    const totalUsers = allUsers.size;
+    const totalWallets = this.watchedWallets.size;
+    const activeWatchers = new Set<number>();
+    this.watchedWallets.forEach(({ chatIds }) =>
+      chatIds.forEach((id) => activeWatchers.add(id)),
+    );
+
+    const uptimeMs = Date.now() - startTime.getTime();
+    const hours = Math.floor(uptimeMs / 3600000);
+    const minutes = Math.floor((uptimeMs % 3600000) / 60000);
+
+    const lines = [
+      `┌─────────────────────────────`,
+      `│ 📊 <b>BOT STATS</b>`,
+      `└─────────────────────────────\n`,
+      `👥 Total users: <b>${totalUsers}</b>`,
+      `👁 Active watchers: <b>${activeWatchers.size}</b>`,
+      `👛 Wallets being tracked: <b>${totalWallets}</b>`,
+      `⏱ Uptime: <b>${hours}h ${minutes}m</b>`,
+      `\n<b>Recent Users:</b>`,
+    ];
+
+    // Show last 10 users
+    const recent = [...allUsers.entries()]
+      .sort((a, b) => b[1].lastSeen.getTime() - a[1].lastSeen.getTime())
+      .slice(0, 10);
+
+    for (const [chatId, info] of recent) {
+      const walletCount = this.getWatchedWallets(chatId).length;
+      const name = info.username ? `@${info.username}` : `User ${chatId}`;
+      const last = info.lastSeen.toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      lines.push(`• ${name}  ·  ${walletCount} wallet(s)  ·  ${last}`);
+    }
+
+    return lines.join('\n');
   }
 
   // ─── Portfolio ───────────────────────────────────────────────────────────────

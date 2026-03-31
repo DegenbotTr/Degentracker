@@ -19,6 +19,7 @@ export class BotUpdate {
 
   @Start()
   async onStart(@Ctx() ctx: Context): Promise<void> {
+    this.trackUser(ctx);
     await ctx.reply(
       `🚀 <b>Sol Wallet Watcher</b>\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
@@ -173,6 +174,15 @@ export class BotUpdate {
     );
   }
 
+  // ─── Stats ──────────────────────────────────────────────────────────────────
+
+  @Command('stats')
+  async onStats(@Ctx() ctx: Context): Promise<void> {
+    this.trackUser(ctx);
+    const result = this.solanaService.getStats();
+    await ctx.reply(result, { parse_mode: 'HTML' });
+  }
+
   // ─── Min Trade Size ─────────────────────────────────────────────────────────
 
   @Command('minsize')
@@ -203,6 +213,8 @@ export class BotUpdate {
     if (text.startsWith('/')) return;
 
     const chatId = ctx.chat.id;
+    this.trackUser(ctx);
+
     const action = pendingAction.get(chatId);
     if (!action) return;
 
@@ -225,23 +237,34 @@ export class BotUpdate {
     return parts[1] || null;
   }
 
+  private trackUser(ctx: Context): void {
+    const chatId = ctx.chat?.id;
+    if (!chatId) return;
+    const username = (ctx.from as any)?.username || '';
+    this.solanaService.trackUser(chatId, username);
+  }
+
   private async addWallet(ctx: Context, address: string): Promise<void> {
-    const success = this.solanaService.watchWallet(address, ctx.chat.id);
-    if (!success) {
+    try {
+      const success = this.solanaService.watchWallet(address, ctx.chat.id);
+      if (!success) {
+        await ctx.reply(
+          `❌ <b>Invalid address</b>\n\nCouldn't recognise that as a Solana wallet. Double-check and try again.`,
+          { parse_mode: 'HTML' },
+        );
+        return;
+      }
+      const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
       await ctx.reply(
-        `❌ <b>Invalid address</b>\n\nCouldn't recognise that as a Solana wallet. Double-check and try again.`,
+        `✅ <b>Wallet Added</b>\n━━━━━━━━━━━━━━━━━━━━\n` +
+          `👛 <a href="https://solscan.io/account/${address}">${short}</a>\n` +
+          `<code>${address}</code>\n\n` +
+          `You'll be notified on every buy and sell.\nUse /minsize to filter small trades.`,
         { parse_mode: 'HTML' },
       );
-      return;
+    } catch {
+      await ctx.reply(`❌ Something went wrong. Please try again.`);
     }
-    const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
-    await ctx.reply(
-      `✅ <b>Wallet Added</b>\n━━━━━━━━━━━━━━━━━━━━\n` +
-        `👛 <a href="https://solscan.io/account/${address}">${short}</a>\n` +
-        `<code>${address}</code>\n\n` +
-        `You'll be notified on every buy and sell.\nUse /minsize to filter small trades.`,
-      { parse_mode: 'HTML' },
-    );
   }
 
   private async removeWallet(ctx: Context, address: string): Promise<void> {
