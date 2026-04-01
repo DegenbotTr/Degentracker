@@ -304,14 +304,9 @@ let SolanaService = SolanaService_1 = class SolanaService {
         const lines = [
             `┌─────────────────────────────`,
             `│ 📜 <b>TX HISTORY</b>`,
-            `│ � <a href="https://solscan.io/account/${address}">${short}</a>`,
+            `│ 👛 <a href="https://solscan.io/account/${address}">${short}</a>`,
             `│ Last ${sigsRes.length} transactions`,
             `└─────────────────────────────\n`,
-        ];
-        const DEX_PROGRAMS = [
-            'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',
-            '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',
-            'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',
         ];
         for (let i = 0; i < sigsRes.length; i++) {
             const sig = sigsRes[i];
@@ -329,54 +324,41 @@ let SolanaService = SolanaService_1 = class SolanaService {
             let typeLabel = '↔️ Transaction';
             let detailLines = [];
             if (tx && !sig.err) {
-                const instructions = tx.transaction.message.instructions;
-                const isSwap = instructions.some((ix) => DEX_PROGRAMS.includes(ix.programId?.toString()));
                 const accountKeys = tx.transaction.message.accountKeys;
                 const walletIndex = accountKeys.findIndex((k) => k.pubkey?.toString() === address || k.toString() === address);
-                if (isSwap && walletIndex !== -1) {
+                if (walletIndex !== -1) {
                     const solChange = ((tx.meta?.postBalances?.[walletIndex] ?? 0) -
                         (tx.meta?.preBalances?.[walletIndex] ?? 0)) /
                         1e9;
+                    const pre = tx.meta?.preTokenBalances || [];
+                    const post = tx.meta?.postTokenBalances || [];
+                    const changed = post.find((p) => p.owner === address &&
+                        pre.some((r) => r.mint === p.mint &&
+                            r.uiTokenAmount.uiAmount !== p.uiTokenAmount.uiAmount)) ||
+                        post.find((p) => p.owner === address &&
+                            !pre.some((r) => r.mint === p.mint && r.owner === address));
                     const isBuy = solChange < -0.001;
                     const isSell = solChange > 0.001;
-                    if (isBuy || isSell) {
+                    if ((isBuy || isSell) && changed) {
                         typeLabel = isBuy ? '🟢 BUY' : '🔴 SELL';
                         const solAmt = Math.abs(solChange);
                         const usdAmt = solAmt * solPrice;
-                        const pre = tx.meta?.preTokenBalances || [];
-                        const post = tx.meta?.postTokenBalances || [];
-                        const changed = post.find((p) => p.owner === address &&
-                            pre.some((r) => r.mint === p.mint &&
-                                r.uiTokenAmount.uiAmount !== p.uiTokenAmount.uiAmount));
-                        if (changed) {
-                            const preEntry = pre.find((r) => r.mint === changed.mint && r.owner === address);
-                            const tokenAmt = Math.abs((changed.uiTokenAmount.uiAmount ?? 0) -
-                                (preEntry?.uiTokenAmount.uiAmount ?? 0));
-                            const mintShort = `${changed.mint.slice(0, 6)}...${changed.mint.slice(-4)}`;
-                            const pricePerToken = tokenAmt > 0 ? usdAmt / tokenAmt : 0;
-                            detailLines = [
-                                `   🪙 Token: <a href="https://solscan.io/token/${changed.mint}">${mintShort}</a>`,
-                                `   💰 ${tokenAmt.toLocaleString(undefined, { maximumFractionDigits: 2 })} tokens`,
-                                `   ◎ ${solAmt.toFixed(4)} SOL  ·  <b>~$${usdAmt.toFixed(2)}</b>`,
-                                pricePerToken > 0
-                                    ? `   📊 $${pricePerToken < 0.0001 ? pricePerToken.toExponential(3) : pricePerToken.toFixed(6)} per token`
-                                    : '',
-                            ].filter(Boolean);
-                        }
-                        else {
-                            detailLines = [
-                                `   ◎ ${solAmt.toFixed(4)} SOL  ·  <b>~$${usdAmt.toFixed(2)}</b>`,
-                            ];
-                        }
+                        const preEntry = pre.find((r) => r.mint === changed.mint && r.owner === address);
+                        const tokenAmt = Math.abs((changed.uiTokenAmount.uiAmount ?? 0) -
+                            (preEntry?.uiTokenAmount.uiAmount ?? 0));
+                        const mintShort = `${changed.mint.slice(0, 6)}...${changed.mint.slice(-4)}`;
+                        const pricePerToken = tokenAmt > 0 ? usdAmt / tokenAmt : 0;
+                        detailLines = [
+                            `   🪙 <a href="https://dexscreener.com/solana/${changed.mint}">${mintShort}</a>`,
+                            `   💰 ${tokenAmt.toLocaleString(undefined, { maximumFractionDigits: 2 })} tokens`,
+                            `   ◎ ${solAmt.toFixed(4)} SOL  ·  <b>~$${usdAmt.toFixed(2)}</b>`,
+                            pricePerToken > 0
+                                ? `   📊 $${pricePerToken < 0.0001 ? pricePerToken.toExponential(3) : pricePerToken.toFixed(6)} per token`
+                                : '',
+                        ].filter(Boolean);
                     }
-                }
-                else if (walletIndex !== -1) {
-                    const solChange = ((tx.meta?.postBalances?.[walletIndex] ?? 0) -
-                        (tx.meta?.preBalances?.[walletIndex] ?? 0)) /
-                        1e9;
-                    if (Math.abs(solChange) > 0.000001) {
-                        const dir = solChange > 0 ? '📥 Received' : '📤 Sent';
-                        typeLabel = dir;
+                    else if (Math.abs(solChange) > 0.000001 && !changed) {
+                        typeLabel = solChange > 0 ? '📥 Received' : '📤 Sent';
                         detailLines = [
                             `   ◎ ${Math.abs(solChange).toFixed(4)} SOL  ·  <b>~$${(Math.abs(solChange) * solPrice).toFixed(2)}</b>`,
                         ];
@@ -488,14 +470,6 @@ let SolanaService = SolanaService_1 = class SolanaService {
         }
     }
     detectAction(tx, walletAddress) {
-        const DEX_PROGRAMS = [
-            'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',
-            '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',
-            'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',
-        ];
-        const isSwap = tx.transaction.message.instructions.some((ix) => DEX_PROGRAMS.includes(ix.programId?.toString()));
-        if (!isSwap)
-            return null;
         const accountKeys = tx.transaction.message.accountKeys;
         const walletIndex = accountKeys.findIndex((k) => k.pubkey?.toString() === walletAddress ||
             k.toString() === walletAddress);
@@ -509,18 +483,25 @@ let SolanaService = SolanaService_1 = class SolanaService {
             return null;
         const preTokenBalances = tx.meta?.preTokenBalances || [];
         const postTokenBalances = tx.meta?.postTokenBalances || [];
-        let tokenSymbol = 'Unknown';
-        let tokenMint = '';
-        let tokenAmount = 0;
         const changedToken = postTokenBalances.find((post) => post.owner === walletAddress &&
             preTokenBalances.some((pre) => pre.mint === post.mint &&
                 pre.uiTokenAmount.uiAmount !== post.uiTokenAmount.uiAmount));
+        const newToken = !changedToken &&
+            postTokenBalances.find((post) => post.owner === walletAddress &&
+                !preTokenBalances.some((pre) => pre.mint === post.mint && pre.owner === walletAddress));
+        const token = changedToken || newToken;
+        if (!token)
+            return null;
+        let tokenMint = token.mint;
+        let tokenSymbol = `${token.mint.slice(0, 6)}...${token.mint.slice(-4)}`;
+        let tokenAmount = 0;
         if (changedToken) {
-            tokenMint = changedToken.mint;
-            tokenSymbol = `${changedToken.mint.slice(0, 6)}...${changedToken.mint.slice(-4)}`;
             const pre = preTokenBalances.find((p) => p.mint === changedToken.mint && p.owner === walletAddress);
             tokenAmount = Math.abs((changedToken.uiTokenAmount.uiAmount ?? 0) -
                 (pre?.uiTokenAmount.uiAmount ?? 0));
+        }
+        else if (newToken) {
+            tokenAmount = newToken.uiTokenAmount.uiAmount ?? 0;
         }
         return {
             type,
