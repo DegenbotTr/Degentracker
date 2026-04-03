@@ -19,18 +19,17 @@ const config_1 = require("@nestjs/config");
 const web3_js_1 = require("@solana/web3.js");
 const nestjs_telegraf_1 = require("nestjs-telegraf");
 const telegraf_1 = require("telegraf");
-const minTradeSize = new Map();
-const walletLabels = new Map();
-const allUsers = new Map();
+const prisma_service_1 = require("../prisma/prisma.service");
 const startTime = new Date();
 let SolanaService = SolanaService_1 = class SolanaService {
-    constructor(config, bot) {
+    constructor(config, prisma, bot) {
         this.config = config;
+        this.prisma = prisma;
         this.bot = bot;
         this.logger = new common_1.Logger(SolanaService_1.name);
         this.watchedWallets = new Map();
     }
-    onModuleInit() {
+    async onModuleInit() {
         this.apiKey = this.config.get('HELIUS_API_KEY');
         const rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${this.apiKey}`;
         const wsUrl = `wss://mainnet.helius-rpc.com/?api-key=${this.apiKey}`;
@@ -38,13 +37,21 @@ let SolanaService = SolanaService_1 = class SolanaService {
             wsEndpoint: wsUrl,
             commitment: 'confirmed',
         });
+        const allWatched = await this.prisma.wallet.findMany({
+            include: { watchers: true },
+        });
+        for (const w of allWatched) {
+            if (w.watchers.length > 0) {
+                await this.initWalletSubscription(w.address);
+            }
+        }
         const envWallets = this.config.get('WATCHED_WALLETS', '');
         if (envWallets) {
-            envWallets.split(',').forEach((addr) => {
+            for (const addr of envWallets.split(',')) {
                 const trimmed = addr.trim();
                 if (trimmed)
-                    this.watchWallet(trimmed, null);
-            });
+                    await this.watchWallet(trimmed, null);
+            }
         }
     }
     onModuleDestroy() {
@@ -52,25 +59,18 @@ let SolanaService = SolanaService_1 = class SolanaService {
             this.connection.removeOnLogsListener(subId).catch(() => { });
         });
     }
-    async validateWallet(address) {
-        try {
-            new web3_js_1.PublicKey(address);
+    async initWalletSubscription(address) {
+        if (this.watchedWallets.has(address)) {
+            return this.watchedWallets.get(address).subId;
         }
-        catch {
-            return 'invalid_address';
-        }
-        try {
-            const accountInfo = await this.connection.getAccountInfo(new web3_js_1.PublicKey(address));
-            if (!accountInfo)
-                return 'valid';
-            const SYSTEM_PROGRAM = '11111111111111111111111111111111';
-            if (accountInfo.owner.toBase58() === SYSTEM_PROGRAM)
-                return 'valid';
-            return 'not_wallet';
-        }
-        catch {
-            return 'valid';
-        }
+        const subId = this.connection.onLogs(new web3_js_1.PublicKey(address), async (logs) => {
+            if (logs.err)
+                return;
+            await this.handleTransaction(address, logs.signature);
+        }, 'confirmed');
+        this.watchedWallets.set(address, { subId, chatIds: new Set() });
+        this.logger.log(`Subscription active for: ${address}`);
+        return subId;
     }
     async watchWallet(address, chatId) {
         try {
@@ -79,55 +79,75 @@ let SolanaService = SolanaService_1 = class SolanaService {
         catch {
             return false;
         }
-        if (this.watchedWallets.has(address)) {
-            if (chatId)
-                this.watchedWallets.get(address).chatIds.add(chatId);
+        await this.prisma.wallet.upsert({
+            where: { address },
+            create: { address },
+            update: {},
+        });
+        if (chatId) {
+            await this.prisma.user.upsert({
+                where: { id: chatId },
+                create: { id: chatId },
+                update: {},
+            });
+            await this.prisma.watchedWallet.upsert({
+                where: { userId_walletAddress: { userId: chatId, walletAddress: address } },
+                create: { userId: chatId, walletAddress: address },
+                update: {},
+            });
+        }
+        await this.initWalletSubscription(address);
+        return true;
+    }
+    async unwatchWallet(address, chatId) {
+        try {
+            await this.prisma.watchedWallet.delete({
+                where: { userId_walletAddress: { userId: chatId, walletAddress: address } },
+            });
+            const otherWatchers = await this.prisma.watchedWallet.count({
+                where: { walletAddress: address },
+            });
+            if (otherWatchers === 0) {
+                const entry = this.watchedWallets.get(address);
+                if (entry) {
+                    this.connection.removeOnLogsListener(entry.subId).catch(() => { });
+                    this.watchedWallets.delete(address);
+                }
+            }
             return true;
         }
-        const subId = this.connection.onLogs(new web3_js_1.PublicKey(address), async (logs) => {
-            if (logs.err)
-                return;
-            await this.handleTransaction(address, logs.signature);
-        }, 'confirmed');
-        const chatIds = new Set();
-        if (chatId)
-            chatIds.add(chatId);
-        this.watchedWallets.set(address, { subId, chatIds });
-        this.logger.log(`Watching wallet: ${address}`);
-        return true;
-    }
-    unwatchWallet(address, chatId) {
-        const entry = this.watchedWallets.get(address);
-        if (!entry)
+        catch (e) {
             return false;
-        entry.chatIds.delete(chatId);
-        if (entry.chatIds.size === 0) {
-            this.connection.removeOnLogsListener(entry.subId).catch(() => { });
-            this.watchedWallets.delete(address);
         }
-        return true;
     }
-    getWatchedWallets(chatId) {
-        const result = [];
-        const labels = walletLabels.get(chatId) ?? new Map();
-        this.watchedWallets.forEach((entry, address) => {
-            if (entry.chatIds.has(chatId)) {
-                result.push({ address, label: labels.get(address) ?? '' });
-            }
+    async getWatchedWallets(chatId) {
+        const list = await this.prisma.watchedWallet.findMany({
+            where: { userId: chatId },
+            select: { walletAddress: true, label: true },
         });
-        return result;
+        return list.map((item) => ({
+            address: item.walletAddress,
+            label: item.label ?? '',
+        }));
     }
-    setWalletLabel(chatId, address, label) {
-        const entry = this.watchedWallets.get(address);
-        if (!entry || !entry.chatIds.has(chatId))
+    async setWalletLabel(chatId, address, label) {
+        try {
+            await this.prisma.watchedWallet.update({
+                where: { userId_walletAddress: { userId: chatId, walletAddress: address } },
+                data: { label },
+            });
+            return true;
+        }
+        catch {
             return false;
-        if (!walletLabels.has(chatId))
-            walletLabels.set(chatId, new Map());
-        walletLabels.get(chatId).set(address, label);
-        return true;
+        }
     }
-    getWalletLabel(chatId, address) {
-        return walletLabels.get(chatId)?.get(address) ?? '';
+    async getWalletLabel(chatId, address) {
+        const entry = await this.prisma.watchedWallet.findUnique({
+            where: { userId_walletAddress: { userId: chatId, walletAddress: address } },
+            select: { label: true },
+        });
+        return entry?.label ?? '';
     }
     detectChain(address) {
         const trimmed = address.trim();
@@ -163,26 +183,33 @@ let SolanaService = SolanaService_1 = class SolanaService {
             `This bot only supports <b>Solana</b> wallets.\n` +
             `Solana addresses look like:\n<code>EizqmoCSovbTzuSnmxkdaJwLBBZgyB2GyjN3m3uJWXpZ</code>`);
     }
-    setMinTradeSize(chatId, usd) {
-        minTradeSize.set(chatId, usd);
+    async setMinTradeSize(chatId, usd) {
+        await this.prisma.user.upsert({
+            where: { id: chatId },
+            create: { id: chatId, minTradeSize: usd },
+            update: { minTradeSize: usd },
+        });
     }
-    getMinTradeSize(chatId) {
-        return minTradeSize.get(chatId) ?? 0;
+    async getMinTradeSize(chatId) {
+        const user = await this.prisma.user.findUnique({
+            where: { id: chatId },
+            select: { minTradeSize: true },
+        });
+        return user?.minTradeSize ?? 0;
     }
-    trackUser(chatId, username) {
-        const now = new Date();
-        if (allUsers.has(chatId)) {
-            allUsers.get(chatId).lastSeen = now;
-        }
-        else {
-            allUsers.set(chatId, { username, firstSeen: now, lastSeen: now });
-        }
+    async trackUser(chatId, username) {
+        await this.prisma.user.upsert({
+            where: { id: chatId },
+            create: { id: chatId, username },
+            update: { username, lastSeen: new Date() },
+        });
     }
-    getStats() {
-        const totalUsers = allUsers.size;
-        const totalWallets = this.watchedWallets.size;
-        const activeWatchers = new Set();
-        this.watchedWallets.forEach(({ chatIds }) => chatIds.forEach((id) => activeWatchers.add(id)));
+    async getStats() {
+        const totalUsers = await this.prisma.user.count();
+        const totalWallets = await this.prisma.wallet.count();
+        const activeWatchers = await this.prisma.watchedWallet.groupBy({
+            by: ['userId'],
+        });
         const uptimeMs = Date.now() - startTime.getTime();
         const hours = Math.floor(uptimeMs / 3600000);
         const minutes = Math.floor((uptimeMs % 3600000) / 60000);
@@ -191,7 +218,7 @@ let SolanaService = SolanaService_1 = class SolanaService {
             `│ 📊 <b>BOT STATS</b>`,
             `└─────────────────────────────\n`,
             `👥 Total users: <b>${totalUsers}</b>`,
-            `👁 Active watchers: <b>${activeWatchers.size}</b>`,
+            `👁 Active watchers: <b>${activeWatchers.length}</b>`,
             `👛 Wallets being tracked: <b>${totalWallets}</b>`,
             `⏱ Uptime: <b>${hours}h ${minutes}m</b>`,
         ].join('\n');
@@ -413,14 +440,16 @@ let SolanaService = SolanaService_1 = class SolanaService {
             catch {
             }
             action.usdValue = action.solAmount * solPrice;
-            const entry = this.watchedWallets.get(walletAddress);
-            if (!entry)
-                return;
-            entry.chatIds.forEach((chatId) => {
-                const min = minTradeSize.get(chatId) ?? 0;
+            const watchers = await this.prisma.watchedWallet.findMany({
+                where: { walletAddress },
+                include: { user: true },
+            });
+            for (const watcher of watchers) {
+                const chatId = Number(watcher.userId);
+                const min = watcher.user.minTradeSize;
                 if (action.usdValue < min)
-                    return;
-                const label = this.getWalletLabel(chatId, walletAddress);
+                    continue;
+                const label = watcher.label ?? '';
                 const message = this.formatTradeMessage(walletAddress, signature, action, label);
                 this.bot.telegram
                     .sendMessage(chatId, message, {
@@ -463,7 +492,7 @@ let SolanaService = SolanaService_1 = class SolanaService {
                     .catch((err) => {
                     this.logger.error(`Failed to send to ${chatId}: ${err.message}`);
                 });
-            });
+            }
         }
         catch (err) {
             this.logger.error(`Error handling tx ${signature}: ${err.message}`);
@@ -554,8 +583,9 @@ let SolanaService = SolanaService_1 = class SolanaService {
 exports.SolanaService = SolanaService;
 exports.SolanaService = SolanaService = SolanaService_1 = __decorate([
     (0, common_1.Injectable)(),
-    __param(1, (0, nestjs_telegraf_1.InjectBot)()),
+    __param(2, (0, nestjs_telegraf_1.InjectBot)()),
     __metadata("design:paramtypes", [config_1.ConfigService,
+        prisma_service_1.PrismaService,
         telegraf_1.Telegraf])
 ], SolanaService);
 //# sourceMappingURL=solana.service.js.map

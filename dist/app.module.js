@@ -12,6 +12,7 @@ const config_1 = require("@nestjs/config");
 const nestjs_telegraf_1 = require("nestjs-telegraf");
 const bot_module_1 = require("./bot/bot.module");
 const solana_module_1 = require("./solana/solana.module");
+const prisma_module_1 = require("./prisma/prisma.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -19,6 +20,7 @@ exports.AppModule = AppModule = __decorate([
     (0, common_1.Module)({
         imports: [
             config_1.ConfigModule.forRoot({ isGlobal: true }),
+            prisma_module_1.PrismaModule,
             nestjs_telegraf_1.TelegrafModule.forRootAsync({
                 inject: [config_1.ConfigService],
                 useFactory: (config) => ({

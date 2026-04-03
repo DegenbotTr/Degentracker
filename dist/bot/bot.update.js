@@ -91,19 +91,19 @@ let BotUpdate = class BotUpdate {
         const parts = text.trim().split(/\s+/);
         return parts[1] || null;
     }
-    trackUser(ctx) {
+    async trackUser(ctx) {
         const chatId = ctx.chat?.id;
         if (!chatId)
             return;
-        this.solanaService.trackUser(chatId, ctx.from?.username || '');
+        await this.solanaService.trackUser(chatId, ctx.from?.username || '');
     }
-    buildWalletListContent(chatId) {
-        const wallets = this.solanaService.getWatchedWallets(chatId);
-        const min = this.solanaService.getMinTradeSize(chatId);
+    async buildWalletListContent(chatId) {
+        const wallets = await this.solanaService.getWatchedWallets(chatId);
+        const min = await this.solanaService.getMinTradeSize(chatId);
         const filterLine = min > 0 ? `\n⚙️ Min alert: <b>$${min}</b>` : '';
         if (wallets.length === 0) {
             return {
-                text: `� <b>No wallets watched yet</b>\n\nUse /watch to add one.`,
+                text: ` <b>No wallets watched yet</b>\n\nUse /watch to add one.`,
                 keyboard: mainMenuKeyboard(),
             };
         }
@@ -112,14 +112,14 @@ let BotUpdate = class BotUpdate {
             const btnLabel = w.label ? `🏷 ${w.label}  •  ${short}` : `👛 ${short}`;
             return [{ text: btnLabel, callback_data: `wallet_open:${w.address}` }];
         });
-        buttons.push([{ text: '� Main Menu', callback_data: 'menu_main' }]);
+        buttons.push([{ text: ' Main Menu', callback_data: 'menu_main' }]);
         return {
             text: `👁 <b>Watched Wallets</b> (${wallets.length})${filterLine}\n━━━━━━━━━━━━━━━━━━━━\nTap a wallet to manage it:`,
             keyboard: { inline_keyboard: buttons },
         };
     }
     async onStart(ctx) {
-        this.trackUser(ctx);
+        await this.trackUser(ctx);
         const username = ctx.from?.first_name || 'Trader';
         await ctx.reply(`� <b>Welcome, ${username}!</b>\n\n` +
             `🔭 <b>Sol Wallet Watcher</b> is a real-time Solana wallet tracker.\n\n` +
@@ -149,7 +149,7 @@ let BotUpdate = class BotUpdate {
         });
     }
     async onWatch(ctx) {
-        this.trackUser(ctx);
+        await this.trackUser(ctx);
         const address = this.extractArg(ctx);
         if (address) {
             await this.addWallet(ctx, address);
@@ -164,7 +164,7 @@ let BotUpdate = class BotUpdate {
             await this.removeWallet(ctx, address);
             return;
         }
-        const wallets = this.solanaService.getWatchedWallets(ctx.chat.id);
+        const wallets = await this.solanaService.getWatchedWallets(ctx.chat.id);
         if (wallets.length === 0) {
             await ctx.reply('You have no wallets being watched.');
             return;
@@ -176,14 +176,14 @@ let BotUpdate = class BotUpdate {
             return `${i + 1}.${name} <code>${w.address}</code>`;
         })
             .join('\n');
-        await ctx.reply(`� <b>Remove Wallet</b>\n\nPaste the address to remove:\n\n${list}`, { parse_mode: 'HTML' });
+        await ctx.reply(`🗑 <b>Remove Wallet</b>\n\nPaste the address to remove:\n\n${list}`, { parse_mode: 'HTML' });
     }
     async onList(ctx) {
-        const { text, keyboard } = this.buildWalletListContent(ctx.chat.id);
+        const { text, keyboard } = await this.buildWalletListContent(ctx.chat.id);
         await ctx.reply(text, { parse_mode: 'HTML', reply_markup: keyboard });
     }
     async onLabel(ctx) {
-        const wallets = this.solanaService.getWatchedWallets(ctx.chat.id);
+        const wallets = await this.solanaService.getWatchedWallets(ctx.chat.id);
         if (wallets.length === 0) {
             await ctx.reply(`📭 No wallets to label. Use /watch first.`);
             return;
@@ -226,8 +226,9 @@ let BotUpdate = class BotUpdate {
         await ctx.reply(`� <b>Token Price</b>\n\nPaste a token mint address or symbol:`, { parse_mode: 'HTML' });
     }
     async onStats(ctx) {
-        this.trackUser(ctx);
-        await ctx.reply(this.solanaService.getStats(), { parse_mode: 'HTML' });
+        await this.trackUser(ctx);
+        const stats = await this.solanaService.getStats();
+        await ctx.reply(stats, { parse_mode: 'HTML' });
     }
     async onMinSize(ctx) {
         const arg = this.extractArg(ctx);
@@ -235,7 +236,7 @@ let BotUpdate = class BotUpdate {
             await this.setMinSize(ctx, arg);
             return;
         }
-        const current = this.solanaService.getMinTradeSize(ctx.chat.id);
+        const current = await this.solanaService.getMinTradeSize(ctx.chat.id);
         pendingAction.set(ctx.chat.id, 'minsize');
         await ctx.reply(`⚙️ <b>Minimum Alert Size</b>\n\nCurrent: <b>${current > 0 ? `$${current}` : 'All trades'}</b>\n\nEnter a USD amount or <b>0</b> for all:`, { parse_mode: 'HTML' });
     }
@@ -253,7 +254,7 @@ let BotUpdate = class BotUpdate {
     }
     async onMenuList(ctx) {
         await ctx.answerCbQuery();
-        const { text, keyboard } = this.buildWalletListContent(ctx.chat.id);
+        const { text, keyboard } = await this.buildWalletListContent(ctx.chat.id);
         try {
             await ctx.editMessageText(text, {
                 parse_mode: 'HTML',
@@ -281,13 +282,14 @@ let BotUpdate = class BotUpdate {
     }
     async onMenuMinSize(ctx) {
         await ctx.answerCbQuery();
-        const current = this.solanaService.getMinTradeSize(ctx.chat.id);
+        const current = await this.solanaService.getMinTradeSize(ctx.chat.id);
         pendingAction.set(ctx.chat.id, 'minsize');
         await ctx.reply(`⚙️ <b>Minimum Alert Size</b>\n\nCurrent: <b>${current > 0 ? `$${current}` : 'All trades'}</b>\n\nEnter a USD amount or <b>0</b> for all:`, { parse_mode: 'HTML' });
     }
     async onMenuStats(ctx) {
         await ctx.answerCbQuery();
-        await ctx.reply(this.solanaService.getStats(), { parse_mode: 'HTML' });
+        const stats = await this.solanaService.getStats();
+        await ctx.reply(stats, { parse_mode: 'HTML' });
     }
     async onMenuHelp(ctx) {
         await ctx.answerCbQuery();
@@ -297,10 +299,10 @@ let BotUpdate = class BotUpdate {
     async onWalletOpen(ctx) {
         await ctx.answerCbQuery();
         const address = ctx.match[1];
-        const label = this.solanaService.getWalletLabel(ctx.chat.id, address);
+        const label = await this.solanaService.getWalletLabel(ctx.chat.id, address);
         const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
         const name = label ? `🏷 <b>${label}</b>\n` : '';
-        await ctx.editMessageText(`${name}� <a href="https://solscan.io/account/${address}">${short}</a>\n<code>${address}</code>`, { parse_mode: 'HTML', reply_markup: walletKeyboard(address) });
+        await ctx.editMessageText(`${name}👛 <a href="https://solscan.io/account/${address}">${short}</a>\n<code>${address}</code>`, { parse_mode: 'HTML', reply_markup: walletKeyboard(address) });
     }
     async onWalletPortfolio(ctx) {
         await ctx.answerCbQuery();
@@ -319,7 +321,7 @@ let BotUpdate = class BotUpdate {
         const address = ctx.match[1];
         pendingLabelAddress.set(ctx.chat.id, address);
         pendingAction.set(ctx.chat.id, 'label_name');
-        const existing = this.solanaService.getWalletLabel(ctx.chat.id, address);
+        const existing = await this.solanaService.getWalletLabel(ctx.chat.id, address);
         const current = existing ? ` (current: <b>${existing}</b>)` : '';
         await ctx.reply(`🏷 Enter a name for this wallet${current}:\n<code>${address}</code>`, { parse_mode: 'HTML' });
     }
@@ -334,7 +336,7 @@ let BotUpdate = class BotUpdate {
             return;
         }
         if (text === '📋 List Wallets') {
-            const { text: listText, keyboard } = this.buildWalletListContent(chatId);
+            const { text: listText, keyboard } = await this.buildWalletListContent(chatId);
             await ctx.reply(listText, { parse_mode: 'HTML', reply_markup: keyboard });
             return;
         }
@@ -368,7 +370,7 @@ let BotUpdate = class BotUpdate {
                 await ctx.reply(chainErr, { parse_mode: 'HTML' });
                 return;
             }
-            const wallets = this.solanaService.getWatchedWallets(chatId);
+            const wallets = await this.solanaService.getWatchedWallets(chatId);
             const found = wallets.find((w) => w.address === input);
             if (!found) {
                 await ctx.reply(`❌ That address isn't in your watch list.`);
@@ -386,7 +388,7 @@ let BotUpdate = class BotUpdate {
                 await ctx.reply('❌ Something went wrong. Try /label again.');
                 return;
             }
-            const success = this.solanaService.setWalletLabel(chatId, address, input);
+            const success = await this.solanaService.setWalletLabel(chatId, address, input);
             if (!success) {
                 await ctx.reply('❌ Could not set label. Try /label again.');
                 return;
@@ -418,7 +420,7 @@ let BotUpdate = class BotUpdate {
         }
     }
     async removeWallet(ctx, address) {
-        const success = this.solanaService.unwatchWallet(address, ctx.chat.id);
+        const success = await this.solanaService.unwatchWallet(address, ctx.chat.id);
         if (!success) {
             await ctx.reply(`❌ That wallet isn't in your watch list.`);
             return;
@@ -478,7 +480,7 @@ let BotUpdate = class BotUpdate {
             await ctx.reply(`❌ Enter a number like <code>100</code> or <code>0</code> to disable.`, { parse_mode: 'HTML' });
             return;
         }
-        this.solanaService.setMinTradeSize(ctx.chat.id, value);
+        await this.solanaService.setMinTradeSize(ctx.chat.id, value);
         await ctx.reply(value === 0
             ? `✅ <b>Filter removed</b> — you'll receive all trade alerts.`
             : `✅ <b>Min alert size: $${value}</b>\n\nOnly trades above this value will notify you.`, { parse_mode: 'HTML', reply_markup: mainMenuKeyboard() });
