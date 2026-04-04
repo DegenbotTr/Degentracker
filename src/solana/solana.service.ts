@@ -766,24 +766,22 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
                 inline_keyboard: [
                   [
                     {
-                      text: '🔍 TX on Solscan',
+                      text: 'TX',
                       url: `https://solscan.io/tx/${signature}`,
                     },
                     {
-                      text: '👛 Wallet',
+                      text: 'Wallet',
                       url: `https://solscan.io/account/${walletAddress}`,
                     },
-                  ],
-                  ...(action.transferTo
-                    ? [
-                        [
+                    ...(action.transferTo
+                      ? [
                           {
-                            text: '📬 Recipient',
+                            text: 'Recipient',
                             url: `https://solscan.io/account/${action.transferTo}`,
                           },
-                        ],
-                      ]
-                    : []),
+                        ]
+                      : []),
+                  ],
                 ],
               },
             })
@@ -1177,9 +1175,6 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
   ): string {
     const walletShort = `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
     const labelLine = label ? `🏷 <b>${label}</b>\n` : '';
-    const toShort = action.transferTo
-      ? `${action.transferTo.slice(0, 6)}...${action.transferTo.slice(-4)}`
-      : 'Unknown';
 
     const assetLine = action.outMint
       ? `🪙 Token: <b>${action.outName || action.outSymbol}</b>\n` +
@@ -1197,12 +1192,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       labelLine +
       `👛 ${walletShort}\n` +
       assetLine +
-      recipientLine +
-      `━━━━━━━━━━━━━━━━━━━━\n` +
-      `🔗 <a href="https://solscan.io/tx/${signature}">View TX</a>` +
-      (action.transferTo
-        ? `  ·  <a href="https://solscan.io/account/${action.transferTo}">${toShort}</a>`
-        : '')
+      recipientLine
     );
   }
 
@@ -1272,18 +1262,11 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     });
 
     // Shortened display (10 chars) but full address is inside <code> for copying
-    const fromCaShort = action.outMint
-      ? `${action.outMint.slice(0, 5)}...${action.outMint.slice(-5)}`
-      : null;
-    const toCaShort = action.inMint
-      ? `${action.inMint.slice(0, 5)}...${action.inMint.slice(-5)}`
-      : null;
-
     const fromCaLine = action.outMint
-      ? `🔴 <b>From CA:</b> <code>${action.outMint}</code> <i>(${fromCaShort})</i>\n`
+      ? `🔴 <b>From CA:</b> <code>${action.outMint}</code>\n`
       : '';
     const toCaLine = action.inMint
-      ? `🟢 <b>To CA:</b> <code>${action.inMint}</code> <i>(${toCaShort})</i>\n`
+      ? `🟢 <b>To CA:</b> <code>${action.inMint}</code>\n`
       : '';
 
     return (
