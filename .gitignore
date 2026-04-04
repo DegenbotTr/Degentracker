@@ -4,7 +4,4 @@
 # dependencies
 node_modules/
 
-# build output
-dist/
-
 /generated/prisma
