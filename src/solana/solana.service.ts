@@ -30,7 +30,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     private config: ConfigService,
     private prisma: PrismaService,
     @InjectBot() private bot: Telegraf,
-  ) {}
+  ) { }
 
   async onModuleInit() {
     this.apiKey = this.config.get<string>('HELIUS_API_KEY');
@@ -65,12 +65,9 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy() {
     this.watchedWallets.forEach(({ subId }) => {
-      this.connection.removeOnLogsListener(subId).catch(() => {});
+      this.connection.removeOnLogsListener(subId).catch(() => { });
     });
   }
-
-  // ─── Wallet Watch ────────────────────────────────────────────────────────────
-
   private async initWalletSubscription(address: string): Promise<number> {
     if (this.watchedWallets.has(address)) {
       return this.watchedWallets.get(address).subId;
@@ -88,6 +85,37 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     this.watchedWallets.set(address, { subId, chatIds: new Set() });
     this.logger.log(`Subscription active for: ${address}`);
     return subId;
+  }
+
+  // ─── Wallet Watch ────────────────────────────────────────────────────────────
+
+  async validateWallet(
+    address: string,
+  ): Promise<'valid' | 'invalid_address' | 'not_wallet'> {
+    try {
+      new PublicKey(address);
+    } catch {
+      return 'invalid_address';
+    }
+
+    try {
+      const accountInfo = await this.connection.getAccountInfo(
+        new PublicKey(address),
+      );
+
+      // Account doesn't exist yet — could be a new/empty wallet, allow it
+      if (!accountInfo) return 'valid';
+
+      // System Program owner = regular wallet
+      const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+      if (accountInfo.owner.toBase58() === SYSTEM_PROGRAM) return 'valid';
+
+      // Anything else is a program, token mint, or contract — reject it
+      return 'not_wallet';
+    } catch {
+      // RPC error — allow it rather than blocking the user
+      return 'valid';
+    }
   }
 
   async watchWallet(address: string, chatId: number | null): Promise<boolean> {
@@ -144,7 +172,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       if (otherWatchers === 0) {
         const entry = this.watchedWallets.get(address);
         if (entry) {
-          this.connection.removeOnLogsListener(entry.subId).catch(() => {});
+          this.connection.removeOnLogsListener(entry.subId).catch(() => { });
           this.watchedWallets.delete(address);
         }
       }
@@ -156,15 +184,14 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
 
   async getWatchedWallets(
     chatId: number,
-  ): Promise<{ address: string; label: string; tags: string[] }[]> {
+  ): Promise<{ address: string; label: string }[]> {
     const list = await this.prisma.watchedWallet.findMany({
       where: { userId: chatId },
-      select: { walletAddress: true, label: true, tags: true },
+      select: { walletAddress: true, label: true },
     });
     return list.map((item) => ({
       address: item.walletAddress,
       label: item.label ?? '',
-      tags: item.tags,
     }));
   }
 
@@ -195,8 +222,9 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     });
     return entry?.label ?? '';
   }
-
   // ─── Wallet Tags ─────────────────────────────────────────────────────────────
+  // Note: Tags functionality requires Prisma array operations support
+  // These methods are available but may need schema adjustments
 
   async addWalletTag(
     chatId: number,
@@ -215,11 +243,12 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       const normalizedTag = tag.toLowerCase().trim();
       if (entry.tags.includes(normalizedTag)) return true; // already has tag
 
+      const newTags = [...entry.tags, normalizedTag];
       await this.prisma.watchedWallet.update({
         where: {
           userId_walletAddress: { userId: chatId, walletAddress: address },
         },
-        data: { tags: { push: normalizedTag } },
+        data: { tags: newTags },
       });
       return true;
     } catch {
@@ -274,7 +303,9 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     const wallets = await this.prisma.watchedWallet.findMany({
       where: {
         userId: chatId,
-        tags: { has: normalizedTag },
+        tags: {
+          has: normalizedTag,
+        },
       },
       select: { walletAddress: true, label: true },
     });
@@ -568,11 +599,11 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
 
       const time = sig.blockTime
         ? new Date(sig.blockTime * 1000).toLocaleString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-          })
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
         : 'Unknown time';
 
       const status = sig.err ? '❌' : '✅';
@@ -626,7 +657,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
             );
             const tokenAmt = Math.abs(
               (changed.uiTokenAmount.uiAmount ?? 0) -
-                (preEntry?.uiTokenAmount.uiAmount ?? 0),
+              (preEntry?.uiTokenAmount.uiAmount ?? 0),
             );
             const mintShort = `${changed.mint.slice(0, 6)}...${changed.mint.slice(-4)}`;
             const pricePerToken = tokenAmt > 0 ? usdAmt / tokenAmt : 0;
@@ -719,76 +750,74 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
 
       action.usdValue = action.solAmount * solPrice;
 
-      // ── Fetch token metadata for better display ───────────────────────────
-      if (action.tokenMint) {
-        const meta = await this.fetchTokenMeta(action.tokenMint);
-        if (meta.symbol) action.tokenSymbol = meta.symbol;
-        if (meta.name) action.tokenName = meta.name;
+      // Fetch token metadata + market price for both sides in parallel
+      const [inMeta, outMeta] = await Promise.all([
+        action.inMint
+          ? this.fetchTokenMeta(action.inMint)
+          : Promise.resolve({ name: 'Solana', symbol: 'SOL' }),
+        action.outMint
+          ? this.fetchTokenMeta(action.outMint)
+          : Promise.resolve({ name: 'Solana', symbol: 'SOL' }),
+      ]);
+
+      action.inSymbol = inMeta.symbol || action.inSymbol;
+      action.inName = inMeta.name || action.inName;
+      action.outSymbol = outMeta.symbol || action.outSymbol;
+      action.outName = outMeta.name || action.outName;
+
+      // Sync legacy fields
+      if (action.tokenMint === action.inMint) {
+        action.tokenSymbol = action.inSymbol;
+        action.tokenName = action.inName;
+      } else if (action.tokenMint === action.outMint) {
+        action.tokenSymbol = action.outSymbol;
+        action.tokenName = action.outName;
       }
 
-      // ── Fetch market cap from DexScreener ─────────────────────────────────────
-      let marketCapUsd = 0;
-      let pricePerToken = 0;
-      if (action.tokenMint) {
+      // Fetch live market price for the primary (non-SOL) token via Jupiter
+      const primaryMint = action.inMint ?? action.outMint;
+      let marketPrice = 0;
+      if (primaryMint) {
         try {
-          // Try DexScreener first for market cap
-          const dexRes = await fetch(
-            `https://api.dexscreener.com/latest/dex/tokens/${action.tokenMint}`,
+          const jr = await fetch(
+            `https://price.jup.ag/v6/price?ids=${primaryMint}`,
           );
-          const dexData = await dexRes.json();
-          if (dexData?.pairs && dexData.pairs.length > 0) {
-            const pair = dexData.pairs[0];
-            marketCapUsd = pair.fdv || pair.marketCap || 0;
-            pricePerToken = parseFloat(pair.priceUsd) || 0;
-          }
+          const jd = await jr.json();
+          marketPrice = jd?.data?.[primaryMint]?.price ?? 0;
         } catch {
           /* best effort */
         }
-
-        // Fallback to Jupiter for price if DexScreener didn't work
-        if (pricePerToken === 0) {
-          try {
-            const jr = await fetch(
-              `https://price.jup.ag/v6/price?ids=${action.tokenMint}`,
-            );
-            const jd = await jr.json();
-            pricePerToken = jd?.data?.[action.tokenMint]?.price ?? 0;
-          } catch {
-            /* best effort */
-          }
-        }
       }
 
-      // Add market cap to action object
-      (action as any).marketCapUsd = marketCapUsd;
+      // Tx fee in SOL
+      const txFeeSol = (tx.meta?.fee ?? 0) / 1e9;
+      const txFeeUsd = txFeeSol * solPrice;
 
-      // ── Persist trade to DB ───────────────────────────────────────────────
-      if (action.tokenMint) {
-        try {
-          await this.prisma.trade.upsert({
-            where: { signature },
-            create: {
-              walletAddress,
-              signature,
-              type: action.type,
-              tokenMint: action.tokenMint,
-              tokenSymbol: action.tokenSymbol,
-              tokenName: action.tokenName ?? '',
-              tokenAmount: action.tokenAmount,
-              priceUsd: pricePerToken,
-              totalUsd: action.usdValue,
-              marketCapUsd,
-              solAmount: action.solAmount,
-              timestamp: tx.blockTime
-                ? new Date(tx.blockTime * 1000)
-                : new Date(),
-            },
-            update: {},
-          });
-        } catch (e) {
-          this.logger.warn(`Could not save trade: ${e.message}`);
-        }
+      // Tx timestamp
+      const txTime = tx.blockTime
+        ? new Date(tx.blockTime * 1000).toLocaleString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        })
+        : null;
+
+      // Price impact: difference between what was paid vs market price
+      let priceImpact: number | null = null;
+      if (
+        marketPrice > 0 &&
+        action.inMint &&
+        action.inAmount > 0 &&
+        action.usdValue > 0
+      ) {
+        const paidPerToken = action.usdValue / action.inAmount;
+        priceImpact = ((paidPerToken - marketPrice) / marketPrice) * 100;
       }
+
+      const entry = this.watchedWallets.get(walletAddress);
+      if (!entry) return;
 
       // Fetch all users watching this wallet from DB
       const watchers = await this.prisma.watchedWallet.findMany({
@@ -807,8 +836,10 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
           signature,
           action,
           label,
+          { solPrice, marketPrice, txFeeSol, txFeeUsd, txTime, priceImpact },
         );
 
+        const primaryMintForButtons = action.inMint ?? action.outMint;
         this.bot.telegram
           .sendMessage(chatId, message, {
             parse_mode: 'HTML',
@@ -824,21 +855,25 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
                     callback_data: `wallet_txhistory:${walletAddress}`,
                   },
                 ],
-                ...(action.tokenMint
+                ...(primaryMintForButtons
                   ? [
-                      [
-                        {
-                          text: '📈 Chart',
-                          url: `https://dexscreener.com/solana/${action.tokenMint}`,
-                        },
-                        {
-                          text: '🪙 Token',
-                          url: `https://solscan.io/token/${action.tokenMint}`,
-                        },
-                      ],
-                    ]
+                    [
+                      {
+                        text: '📈 Chart',
+                        url: `https://dexscreener.com/solana/${primaryMintForButtons}`,
+                      },
+                      {
+                        text: '🐦 Birdeye',
+                        url: `https://birdeye.so/token/${primaryMintForButtons}?chain=solana`,
+                      },
+                    ],
+                  ]
                   : []),
                 [
+                  {
+                    text: '🔍 TX on Solscan',
+                    url: `https://solscan.io/tx/${signature}`,
+                  },
                   {
                     text: '👛 Wallet',
                     url: `https://solscan.io/account/${walletAddress}`,
@@ -856,178 +891,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private detectAction(
-    tx: ParsedTransactionWithMeta,
-    walletAddress: string,
-  ): {
-    type: 'BUY' | 'SELL' | 'TRANSFER';
-    tokenSymbol: string;
-    tokenName: string;
-    tokenMint: string;
-    tokenAmount: number;
-    solAmount: number;
-    usdValue: number;
-    toAddress?: string;
-  } | null {
-    const accountKeys = tx.transaction.message.accountKeys;
-    const walletIndex = accountKeys.findIndex(
-      (k: any) =>
-        k.pubkey?.toString() === walletAddress ||
-        k.toString() === walletAddress,
-    );
-    if (walletIndex === -1) return null;
-
-    const solChange =
-      ((tx.meta?.postBalances?.[walletIndex] ?? 0) -
-        (tx.meta?.preBalances?.[walletIndex] ?? 0)) /
-      1e9;
-
-    // Must have a meaningful SOL change
-    const type = solChange < -0.001 ? 'BUY' : solChange > 0.001 ? 'SELL' : null;
-    if (!type) return null;
-
-    const preTokenBalances = tx.meta?.preTokenBalances || [];
-    const postTokenBalances = tx.meta?.postTokenBalances || [];
-
-    // Find any token that changed for this wallet
-    const changedToken = postTokenBalances.find(
-      (post) =>
-        post.owner === walletAddress &&
-        preTokenBalances.some(
-          (pre) =>
-            pre.mint === post.mint &&
-            pre.uiTokenAmount.uiAmount !== post.uiTokenAmount.uiAmount,
-        ),
-    );
-
-    // Also check for new token (first buy — no pre balance entry)
-    const newToken =
-      !changedToken &&
-      postTokenBalances.find(
-        (post) =>
-          post.owner === walletAddress &&
-          !preTokenBalances.some(
-            (pre) => pre.mint === post.mint && pre.owner === walletAddress,
-          ),
-      );
-
-    const token = changedToken || newToken;
-
-    // If no token changed, check if this is a SOL or token transfer
-    if (!token) {
-      // Check for SOL transfer (outgoing)
-      if (solChange < -0.001) {
-        // Find the recipient by looking at post balances
-        let toAddress = '';
-        for (let i = 0; i < accountKeys.length; i++) {
-          if (i === walletIndex) continue;
-          const balanceChange =
-            ((tx.meta?.postBalances?.[i] ?? 0) -
-              (tx.meta?.preBalances?.[i] ?? 0)) /
-            1e9;
-          // If someone received SOL (positive change close to what we sent)
-          if (balanceChange > 0.001) {
-            toAddress =
-              accountKeys[i].pubkey?.toString() || accountKeys[i].toString();
-            break;
-          }
-        }
-
-        if (toAddress) {
-          return {
-            type: 'TRANSFER',
-            tokenSymbol: 'SOL',
-            tokenName: 'Solana',
-            tokenMint: 'So11111111111111111111111111111111111111112',
-            tokenAmount: 0,
-            solAmount: Math.abs(solChange),
-            usdValue: 0,
-            toAddress,
-          };
-        }
-      }
-
-      // Check for token transfer (token balance decreased but no SOL swap)
-      const tokenTransfer = preTokenBalances.find((pre) => {
-        const post = postTokenBalances.find(
-          (p) => p.mint === pre.mint && p.owner === walletAddress,
-        );
-        return (
-          post &&
-          (pre.uiTokenAmount.uiAmount ?? 0) > (post.uiTokenAmount.uiAmount ?? 0)
-        );
-      });
-
-      if (tokenTransfer) {
-        // Find recipient
-        let toAddress = '';
-        const recipientToken = postTokenBalances.find((post) => {
-          const pre = preTokenBalances.find(
-            (p) => p.mint === post.mint && p.owner === post.owner,
-          );
-          return (
-            post.mint === tokenTransfer.mint &&
-            post.owner !== walletAddress &&
-            (post.uiTokenAmount.uiAmount ?? 0) >
-              (pre?.uiTokenAmount.uiAmount ?? 0)
-          );
-        });
-
-        if (recipientToken) {
-          toAddress = recipientToken.owner;
-        }
-
-        const post = postTokenBalances.find(
-          (p) => p.mint === tokenTransfer.mint && p.owner === walletAddress,
-        );
-        const tokenAmount = Math.abs(
-          (tokenTransfer.uiTokenAmount.uiAmount ?? 0) -
-            (post?.uiTokenAmount.uiAmount ?? 0),
-        );
-
-        return {
-          type: 'TRANSFER',
-          tokenSymbol: `${tokenTransfer.mint.slice(0, 6)}...${tokenTransfer.mint.slice(-4)}`,
-          tokenName: '',
-          tokenMint: tokenTransfer.mint,
-          tokenAmount,
-          solAmount: Math.abs(solChange),
-          usdValue: 0,
-          toAddress,
-        };
-      }
-
-      return null;
-    }
-
-    let tokenMint = token.mint;
-    let tokenSymbol = `${token.mint.slice(0, 6)}...${token.mint.slice(-4)}`;
-    let tokenAmount = 0;
-
-    if (changedToken) {
-      const pre = preTokenBalances.find(
-        (p) => p.mint === changedToken.mint && p.owner === walletAddress,
-      );
-      tokenAmount = Math.abs(
-        (changedToken.uiTokenAmount.uiAmount ?? 0) -
-          (pre?.uiTokenAmount.uiAmount ?? 0),
-      );
-    } else if (newToken) {
-      tokenAmount = newToken.uiTokenAmount.uiAmount ?? 0;
-    }
-
-    return {
-      type,
-      tokenSymbol,
-      tokenName: '',
-      tokenMint,
-      tokenAmount,
-      solAmount: Math.abs(solChange),
-      usdValue: 0,
-    };
-  }
-
-  // ─── Token Metadata ───────────────────────────────────────────────────────────
+  // ─── Token Metadata ──────────────────────────────────────────────────────────
 
   private async fetchTokenMeta(
     mint: string,
@@ -1058,354 +922,375 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // ─── PnL Analysis ─────────────────────────────────────────────────────────────
-
-  async getPnlAnalysis(walletAddress: string): Promise<string> {
-    try {
-      new PublicKey(walletAddress);
-    } catch {
-      throw new Error('invalid_address');
-    }
-
-    // Get all trades for this wallet from DB
-    const trades = await this.prisma.trade.findMany({
-      where: { walletAddress },
-      orderBy: { timestamp: 'asc' },
-    });
-
-    if (trades.length === 0) {
-      return (
-        `📊 <b>PnL Analysis</b>\n\n` +
-        `No trades recorded yet for this wallet.\n\n` +
-        `Trades are tracked automatically once you watch a wallet and activity is detected.`
-      );
-    }
-
-    // Group trades by token mint
-    const byMint = new Map<string, typeof trades>();
-    for (const t of trades) {
-      if (!byMint.has(t.tokenMint)) byMint.set(t.tokenMint, []);
-      byMint.get(t.tokenMint).push(t);
-    }
-
-    // Fetch current prices for all unique mints in parallel
-    const mints = [...byMint.keys()];
-    const priceMap = new Map<string, number>();
-    try {
-      const res = await fetch(
-        `https://price.jup.ag/v6/price?ids=${mints.join(',')}`,
-      );
-      const data = await res.json();
-      for (const mint of mints) {
-        priceMap.set(mint, data?.data?.[mint]?.price ?? 0);
-      }
-    } catch {
-      /* best effort */
-    }
-
-    const short = `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
-    let totalRealizedPnl = 0;
-    let totalUnrealizedPnl = 0;
-    const tokenLines: string[] = [];
-
-    for (const [mint, mintTrades] of byMint) {
-      const buys = mintTrades.filter((t) => t.type === 'BUY');
-      const sells = mintTrades.filter((t) => t.type === 'SELL');
-      const symbol = mintTrades[mintTrades.length - 1].tokenSymbol;
-      const name = mintTrades[mintTrades.length - 1].tokenName || symbol;
-      const currentPrice = priceMap.get(mint) ?? 0;
-      const firstBuy = buys[0];
-
-      // Total bought / sold amounts
-      const totalBought = buys.reduce((s, t) => s + t.tokenAmount, 0);
-      const totalSold = sells.reduce((s, t) => s + t.tokenAmount, 0);
-      const totalSpentUsd = buys.reduce((s, t) => s + t.totalUsd, 0);
-      const totalReceivedUsd = sells.reduce((s, t) => s + t.totalUsd, 0);
-      const avgBuyPrice = totalBought > 0 ? totalSpentUsd / totalBought : 0;
-
-      // Remaining tokens (unrealized)
-      const remaining = Math.max(0, totalBought - totalSold);
-      const currentValue = remaining * currentPrice;
-      const costBasisRemaining = remaining * avgBuyPrice;
-      const unrealizedPnl = currentValue - costBasisRemaining;
-
-      // Realized PnL from sells
-      const realizedPnl = totalReceivedUsd - totalSold * avgBuyPrice;
-
-      totalRealizedPnl += realizedPnl;
-      totalUnrealizedPnl += unrealizedPnl;
-
-      const totalPnl = realizedPnl + unrealizedPnl;
-      const pnlEmoji = totalPnl >= 0 ? '📈' : '📉';
-      const pnlSign = totalPnl >= 0 ? '+' : '';
-      const mintShort = `${mint.slice(0, 6)}...${mint.slice(-4)}`;
-      const firstBuyTime = firstBuy
-        ? new Date(firstBuy.timestamp).toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric',
-          })
-        : 'unknown';
-
-      // Market cap at first buy vs now
-      const mcapAtBuy = firstBuy?.marketCapUsd ?? 0;
-      const mcapLine =
-        mcapAtBuy > 0
-          ? `   📦 MCap at buy: <b>$${mcapAtBuy >= 1e6 ? (mcapAtBuy / 1e6).toFixed(2) + 'M' : mcapAtBuy.toFixed(0)}</b>\n`
-          : '';
-
-      const currentPriceLine =
-        currentPrice > 0
-          ? `   💲 Now: <b>$${currentPrice < 0.0001 ? currentPrice.toExponential(3) : currentPrice.toFixed(6)}</b>  ·  Avg buy: <b>$${avgBuyPrice < 0.0001 ? avgBuyPrice.toExponential(3) : avgBuyPrice.toFixed(6)}</b>\n`
-          : `   💲 Avg buy: <b>$${avgBuyPrice < 0.0001 ? avgBuyPrice.toExponential(3) : avgBuyPrice.toFixed(6)}</b>\n`;
-
-      tokenLines.push(
-        `🪙 <b>${name}</b> (<a href="https://dexscreener.com/solana/${mint}">${mintShort}</a>)\n` +
-          `   📅 First buy: <b>${firstBuyTime}</b>\n` +
-          `   🛒 Bought: <b>${totalBought.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${symbol}</b>  ·  <b>$${totalSpentUsd.toFixed(2)}</b>\n` +
-          (totalSold > 0
-            ? `   💸 Sold: <b>${totalSold.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${symbol}</b>  ·  <b>$${totalReceivedUsd.toFixed(2)}</b>\n`
-            : '') +
-          (remaining > 0
-            ? `   👜 Holding: <b>${remaining.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${symbol}</b>  ·  <b>$${currentValue.toFixed(2)}</b>\n`
-            : '') +
-          currentPriceLine +
-          mcapLine +
-          `   ${pnlEmoji} PnL: <b>${pnlSign}$${totalPnl.toFixed(2)}</b>` +
-          (realizedPnl !== 0
-            ? `  (realized: <b>${realizedPnl >= 0 ? '+' : ''}$${realizedPnl.toFixed(2)}</b>)`
-            : '') +
-          `\n`,
-      );
-    }
-
-    const totalPnl = totalRealizedPnl + totalUnrealizedPnl;
-    const totalEmoji = totalPnl >= 0 ? '📈' : '📉';
-    const totalSign = totalPnl >= 0 ? '+' : '';
-
-    const lines = [
-      `┌─────────────────────────────`,
-      `│ 📊 <b>PnL ANALYSIS</b>`,
-      `│ 👛 <a href="https://solscan.io/account/${walletAddress}">${short}</a>`,
-      `│ 🪙 ${byMint.size} token${byMint.size !== 1 ? 's' : ''} tracked`,
-      `└─────────────────────────────\n`,
-      `${totalEmoji} Total PnL: <b>${totalSign}$${totalPnl.toFixed(2)}</b>`,
-      `   📈 Unrealized: <b>${totalUnrealizedPnl >= 0 ? '+' : ''}$${totalUnrealizedPnl.toFixed(2)}</b>`,
-      `   💸 Realized:   <b>${totalRealizedPnl >= 0 ? '+' : ''}$${totalRealizedPnl.toFixed(2)}</b>\n`,
-      `━━━━━━━━━━━━━━━━━━━━\n`,
-      ...tokenLines,
-      `🔗 <a href="https://solscan.io/account/${walletAddress}">View on Solscan</a>`,
-    ];
-
-    return lines.join('\n');
-  }
-
-  // ─── Backfill Historical Trades ──────────────────────────────────────────────
-
-  async backfillTrades(
+  private detectAction(
+    tx: ParsedTransactionWithMeta,
     walletAddress: string,
-    limit: number = 100,
-  ): Promise<{ success: boolean; count: number; message: string }> {
-    try {
-      new PublicKey(walletAddress);
-    } catch {
-      return { success: false, count: 0, message: 'Invalid wallet address' };
-    }
+  ): {
+    type: 'BUY' | 'SELL' | 'SWAP';
+    // "in" = what the wallet received
+    inSymbol: string;
+    inName: string;
+    inMint: string | null; // null = native SOL
+    inAmount: number;
+    // "out" = what the wallet spent
+    outSymbol: string;
+    outName: string;
+    outMint: string | null; // null = native SOL
+    outAmount: number;
+    usdValue: number;
+    // legacy compat
+    tokenSymbol: string;
+    tokenName: string;
+    tokenMint: string;
+    tokenAmount: number;
+    solAmount: number;
+  } | null {
+    const accountKeys = tx.transaction.message.accountKeys;
+    const walletIndex = accountKeys.findIndex(
+      (k: any) =>
+        k.pubkey?.toString() === walletAddress ||
+        k.toString() === walletAddress,
+    );
+    if (walletIndex === -1) return null;
 
-    try {
-      // Fetch historical signatures
-      const sigsRes = await this.connection.getSignaturesForAddress(
-        new PublicKey(walletAddress),
-        { limit },
+    const solChange =
+      ((tx.meta?.postBalances?.[walletIndex] ?? 0) -
+        (tx.meta?.preBalances?.[walletIndex] ?? 0)) /
+      1e9;
+
+    const preTokenBalances = tx.meta?.preTokenBalances || [];
+    const postTokenBalances = tx.meta?.postTokenBalances || [];
+
+    // Compute per-mint token delta for this wallet
+    const allMints = new Set([
+      ...preTokenBalances
+        .filter((b) => b.owner === walletAddress)
+        .map((b) => b.mint),
+      ...postTokenBalances
+        .filter((b) => b.owner === walletAddress)
+        .map((b) => b.mint),
+    ]);
+
+    const tokenDeltas: { mint: string; delta: number }[] = [];
+    for (const mint of allMints) {
+      const pre = preTokenBalances.find(
+        (b) => b.mint === mint && b.owner === walletAddress,
       );
-
-      if (!sigsRes.length) {
-        return { success: true, count: 0, message: 'No transactions found' };
-      }
-
-      // Fetch full tx details in parallel (batches of 10 to avoid rate limits)
-      const batchSize = 10;
-      const allTxs: (ParsedTransactionWithMeta | null)[] = [];
-      for (let i = 0; i < sigsRes.length; i += batchSize) {
-        const batch = sigsRes.slice(i, i + batchSize);
-        const txs = await Promise.all(
-          batch.map((s) =>
-            this.connection
-              .getParsedTransaction(s.signature, {
-                maxSupportedTransactionVersion: 0,
-              })
-              .catch(() => null),
-          ),
-        );
-        allTxs.push(...txs);
-      }
-
-      // Fetch SOL price for USD conversion (use current price as approximation)
-      let solPrice = 0;
-      try {
-        const p = await (
-          await fetch(
-            'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd',
-          )
-        ).json();
-        solPrice = p?.solana?.usd ?? 0;
-      } catch {
-        /* best effort */
-      }
-
-      let savedCount = 0;
-
-      for (let i = 0; i < sigsRes.length; i++) {
-        const sig = sigsRes[i];
-        const tx = allTxs[i];
-        if (!tx || sig.err) continue;
-
-        // Check if already saved
-        const existing = await this.prisma.trade.findUnique({
-          where: { signature: sig.signature },
-        });
-        if (existing) continue;
-
-        const action = this.detectAction(tx, walletAddress);
-        if (!action) continue;
-
-        action.usdValue = action.solAmount * solPrice;
-
-        // Fetch token metadata
-        if (action.tokenMint) {
-          const meta = await this.fetchTokenMeta(action.tokenMint);
-          if (meta.symbol) action.tokenSymbol = meta.symbol;
-          if (meta.name) action.tokenName = meta.name;
-        }
-
-        // Fetch market price (current, as historical prices aren't available)
-        let pricePerToken = 0;
-        if (action.tokenMint) {
-          try {
-            const jr = await fetch(
-              `https://price.jup.ag/v6/price?ids=${action.tokenMint}`,
-            );
-            const jd = await jr.json();
-            pricePerToken = jd?.data?.[action.tokenMint]?.price ?? 0;
-          } catch {
-            /* best effort */
-          }
-        }
-
-        // Save to DB
-        try {
-          await this.prisma.trade.create({
-            data: {
-              walletAddress,
-              signature: sig.signature,
-              type: action.type,
-              tokenMint: action.tokenMint,
-              tokenSymbol: action.tokenSymbol,
-              tokenName: action.tokenName ?? '',
-              tokenAmount: action.tokenAmount,
-              priceUsd: pricePerToken,
-              totalUsd: action.usdValue,
-              marketCapUsd: 0,
-              solAmount: action.solAmount,
-              timestamp: sig.blockTime
-                ? new Date(sig.blockTime * 1000)
-                : new Date(),
-            },
-          });
-          savedCount++;
-        } catch (e) {
-          this.logger.warn(
-            `Could not save backfilled trade ${sig.signature}: ${e.message}`,
-          );
-        }
-      }
-
-      return {
-        success: true,
-        count: savedCount,
-        message: `Backfilled ${savedCount} trade${savedCount !== 1 ? 's' : ''} from ${sigsRes.length} transactions`,
-      };
-    } catch (err) {
-      this.logger.error(`Backfill error: ${err.message}`);
-      return { success: false, count: 0, message: `Error: ${err.message}` };
+      const post = postTokenBalances.find(
+        (b) => b.mint === mint && b.owner === walletAddress,
+      );
+      const delta =
+        (post?.uiTokenAmount.uiAmount ?? 0) -
+        (pre?.uiTokenAmount.uiAmount ?? 0);
+      if (Math.abs(delta) > 0) tokenDeltas.push({ mint, delta });
     }
+
+    const tokensIn = tokenDeltas.filter((t) => t.delta > 0); // received tokens
+    const tokensOut = tokenDeltas.filter((t) => t.delta < 0); // spent tokens
+    const solIn = solChange > 0.001;
+    const solOut = solChange < -0.001;
+
+    // Nothing meaningful happened
+    if (!solIn && !solOut && tokenDeltas.length === 0) return null;
+
+    // Plain SOL transfer (no tokens involved) — skip
+    if (tokenDeltas.length === 0) return null;
+
+    // ── Determine IN / OUT sides ──────────────────────────────────────────────
+
+    let inMint: string | null = null;
+    let inAmount = 0;
+    let outMint: string | null = null;
+    let outAmount = 0;
+
+    if (solOut && tokensIn.length > 0) {
+      // SOL → Token  (classic BUY)
+      const t = tokensIn[0];
+      inMint = t.mint;
+      inAmount = t.delta;
+      outMint = null;
+      outAmount = Math.abs(solChange);
+    } else if (solIn && tokensOut.length > 0) {
+      // Token → SOL  (classic SELL, or "buy SOL with token")
+      const t = tokensOut[0];
+      inMint = null; // received SOL
+      inAmount = solChange;
+      outMint = t.mint; // spent token
+      outAmount = Math.abs(t.delta);
+    } else if (tokensIn.length > 0 && tokensOut.length > 0) {
+      // Token → Token swap
+      inMint = tokensIn[0].mint;
+      inAmount = tokensIn[0].delta;
+      outMint = tokensOut[0].mint;
+      outAmount = Math.abs(tokensOut[0].delta);
+    } else {
+      return null;
+    }
+
+    // ── Classify type ─────────────────────────────────────────────────────────
+    // BUY  = received a non-SOL token
+    // SELL = spent a non-SOL token and received SOL
+    // SWAP = token-to-token
+    const type =
+      inMint !== null && outMint !== null
+        ? 'SWAP'
+        : inMint !== null
+          ? 'BUY'
+          : 'SELL';
+
+    const shortMint = (m: string) => `${m.slice(0, 6)}...${m.slice(-4)}`;
+
+    return {
+      type,
+      inMint,
+      inName: '',
+      inSymbol: inMint ? shortMint(inMint) : 'SOL',
+      inAmount,
+      outMint,
+      outName: '',
+      outSymbol: outMint ? shortMint(outMint) : 'SOL',
+      outAmount,
+      usdValue: 0,
+      // legacy fields — point to the "interesting" token (non-SOL side)
+      tokenMint: (inMint ?? outMint) || '',
+      tokenSymbol: inMint
+        ? shortMint(inMint)
+        : outMint
+          ? shortMint(outMint)
+          : 'SOL',
+      tokenName: '',
+      tokenAmount: inMint ? inAmount : outAmount,
+      solAmount: Math.abs(solChange),
+    };
   }
 
   private formatTradeMessage(
     walletAddress: string,
     signature: string,
     action: {
-      type: 'BUY' | 'SELL' | 'TRANSFER';
+      type: 'BUY' | 'SELL' | 'SWAP';
+      inSymbol: string;
+      inName: string;
+      inMint: string | null;
+      inAmount: number;
+      outSymbol: string;
+      outName: string;
+      outMint: string | null;
+      outAmount: number;
+      usdValue: number;
+      tokenMint: string;
       tokenSymbol: string;
       tokenName: string;
-      tokenMint: string;
       tokenAmount: number;
       solAmount: number;
-      usdValue: number;
-      marketCapUsd?: number;
-      toAddress?: string;
     },
     label?: string,
+    extra?: {
+      solPrice: number;
+      marketPrice: number;
+      txFeeSol: number;
+      txFeeUsd: number;
+      txTime: string | null;
+      priceImpact: number | null;
+    },
   ): string {
-    // Handle transfers differently
-    if (action.type === 'TRANSFER') {
-      const labelLine = label ? `#<b>${label}</b>\n` : '';
-      const toShort = action.toAddress 
-        ? `${action.toAddress.slice(0, 6)}...${action.toAddress.slice(-4)}`
-        : 'Unknown';
-      
-      if (action.tokenSymbol === 'SOL') {
-        const usdStr = action.usdValue > 0 ? ` ($${action.usdValue.toFixed(2)})` : '';
-        return (
-          labelLine +
-          `📤 Transferred <b>${action.solAmount.toFixed(4)}</b> #<b>SOL</b>${usdStr} to\n` +
-          `<code>${action.toAddress}</code>\n` +
-          `<a href="https://solscan.io/account/${walletAddress}">Wallet</a> | <a href="https://solscan.io/account/${action.toAddress}">Recipient</a> | <a href="https://solscan.io/tx/${signature}">ViewTx</a>`
-        );
-      } else {
-        const tokenAmtStr = action.tokenAmount > 0 
-          ? action.tokenAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })
-          : '?';
-        const usdStr = action.usdValue > 0 ? ` ($${action.usdValue.toFixed(2)})` : '';
-        return (
-          labelLine +
-          `📤 Transferred <b>${tokenAmtStr}</b> #<b>${action.tokenSymbol}</b>${usdStr} to\n` +
-          `<code>${action.toAddress}</code>\n` +
-          `<a href="https://solscan.io/account/${walletAddress}">Wallet</a> | <a href="https://solscan.io/account/${action.toAddress}">Recipient</a> | <a href="https://solscan.io/tx/${signature}">ViewTx</a>`
-        );
-      }
-    }
-    
-    // Handle swaps (BUY/SELL)
-    const isBuy = action.type === 'BUY';
-    const emoji = isBuy ? '🟢' : '🔴';
-    const labelLine = label ? `#<b>${label}</b>\n` : '';
-    
-    // Format market cap
-    const formatMC = (mc: number): string => {
-      if (mc >= 1_000_000) return `$${(mc / 1_000_000).toFixed(1)}m`;
-      if (mc >= 1_000) return `$${(mc / 1_000).toFixed(1)}k`;
-      return `$${mc.toFixed(0)}`;
-    };
-    
-    const mcLine = action.marketCapUsd 
-      ? ` | MC: ${formatMC(action.marketCapUsd)}`
-      : '';
+    const { type } = action;
+    const emoji = type === 'BUY' ? '🟢' : type === 'SELL' ? '🔴' : '🔄';
+    const labelLine = label ? `🏷 <b>${label}</b>\n` : '';
+    const walletShort = `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
+    const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
-    // Compact format: "Swapped X TOKEN ($Y) for Z SOL"
-    const tokenAmtStr = action.tokenAmount > 0 
-      ? action.tokenAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })
-      : '?';
-    
-    const usdStr = action.usdValue > 0 ? `($${action.usdValue.toFixed(2)})` : '';
+    const tokenLabel = (name: string, symbol: string) =>
+      name && symbol ? `${name} (${symbol})` : symbol || name || '???';
+
+    const caLine = (mint: string | null) =>
+      `   📋 CA: <code>${mint ?? SOL_MINT}</code>\n`;
+
+    const fmtAmount = (amount: number, symbol: string) =>
+      `<b>${amount.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${symbol}</b>`;
+
+    const usdLine =
+      action.usdValue > 0
+        ? `💵 Trade Value:  <b>~$${action.usdValue.toFixed(2)}</b>\n`
+        : '';
+
+    const paidPerToken =
+      action.inMint && action.inAmount > 0 && action.usdValue > 0
+        ? action.usdValue / action.inAmount
+        : 0;
+    const paidLine =
+      paidPerToken > 0
+        ? `💲 Paid/token:   <b>$${paidPerToken < 0.0001 ? paidPerToken.toExponential(4) : paidPerToken.toFixed(6)}</b>\n`
+        : '';
+
+    const marketLine =
+      extra?.marketPrice && extra.marketPrice > 0
+        ? `📊 Mkt price:    <b>$${extra.marketPrice < 0.0001 ? extra.marketPrice.toExponential(4) : extra.marketPrice.toFixed(6)}</b>\n`
+        : '';
+
+    let impactLine = '';
+    if (extra?.priceImpact !== null && extra?.priceImpact !== undefined) {
+      const pi = extra.priceImpact;
+      const piEmoji = pi > 5 ? '🔴' : pi > 2 ? '🟡' : '🟢';
+      impactLine = `${piEmoji} Price impact: <b>${pi >= 0 ? '+' : ''}${pi.toFixed(2)}%</b>\n`;
+    }
+
+    const solPriceLine =
+      extra?.solPrice && extra.solPrice > 0
+        ? `◎ SOL price:    <b>$${extra.solPrice.toFixed(2)}</b>\n`
+        : '';
+
+    const feeLine =
+      extra && extra.txFeeSol > 0
+        ? `⛽ Tx fee:       <b>${extra.txFeeSol.toFixed(6)} SOL</b>${extra.txFeeUsd > 0 ? ` (~$${extra.txFeeUsd.toFixed(4)})` : ''}\n`
+        : '';
+
+    const timeLine = extra?.txTime ? `🕐 <b>${extra.txTime}</b>\n` : '';
+    const sigShort = `${signature.slice(0, 8)}...${signature.slice(-6)}`;
+
+    const primaryMint = action.inMint ?? action.outMint;
+    const links = primaryMint
+      ? `<a href="https://dexscreener.com/solana/${primaryMint}">DexScreener</a>  ·  ` +
+      `<a href="https://solscan.io/token/${primaryMint}">Solscan</a>  ·  ` +
+      `<a href="https://birdeye.so/token/${primaryMint}?chain=solana">Birdeye</a>  ·  ` +
+      `<a href="https://solscan.io/tx/${signature}">${sigShort}</a>`
+      : `<a href="https://solscan.io/tx/${signature}">${sigShort}</a>`;
 
     return (
+      `${emoji} <b>${type}</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
       labelLine +
-      `${emoji} ${isBuy ? 'Swapped' : 'Sold'} <b>${tokenAmtStr}</b> #<b>${action.tokenSymbol}</b> ${usdStr} for <b>${action.solAmount.toFixed(4)}</b> #<b>SOL</b>${mcLine}\n` +
-      `<a href="https://solscan.io/account/${walletAddress}">Wallet</a> | <a href="https://dexscreener.com/solana/${action.tokenMint}">Chart</a> | <a href="https://solscan.io/tx/${signature}">ViewTx</a>`
+      `👛 <a href="https://solscan.io/account/${walletAddress}">${walletShort}</a>  ${timeLine}` +
+      `\n` +
+      `📤 <b>Spent</b>\n` +
+      `   ${fmtAmount(action.outAmount, action.outSymbol)}\n` +
+      `   🪙 ${tokenLabel(action.outName, action.outSymbol)}\n` +
+      caLine(action.outMint) +
+      `\n` +
+      `📥 <b>Received</b>\n` +
+      `   ${fmtAmount(action.inAmount, action.inSymbol)}\n` +
+      `   🪙 ${tokenLabel(action.inName, action.inSymbol)}\n` +
+      caLine(action.inMint) +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      usdLine +
+      paidLine +
+      marketLine +
+      impactLine +
+      solPriceLine +
+      feeLine +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `🔗 ${links}`
     );
   }
 
+  // ─── Backfill & PnL ──────────────────────────────────────────────────────────
+
+  async backfillTrades(
+    address: string,
+    limit: number,
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      new PublicKey(address);
+    } catch {
+      return { success: false, message: 'Invalid Solana address' };
+    }
+
+    try {
+      const sigsRes = await this.connection.getSignaturesForAddress(
+        new PublicKey(address),
+        { limit },
+      );
+
+      if (!sigsRes.length) {
+        return { success: false, message: 'No transactions found' };
+      }
+
+      let processed = 0;
+      let errors = 0;
+
+      for (const sig of sigsRes) {
+        try {
+          const tx = await this.connection.getParsedTransaction(sig.signature, {
+            maxSupportedTransactionVersion: 0,
+          });
+          if (!tx || sig.err) continue;
+
+          const action = this.detectAction(tx, address);
+          if (!action) continue;
+
+          // Store trade in database
+          await this.prisma.trade.upsert({
+            where: { signature: sig.signature },
+            create: {
+              walletAddress: address,
+              type: action.type,
+              tokenMint: action.tokenMint,
+              tokenSymbol: action.tokenSymbol,
+              tokenName: action.tokenName,
+              tokenAmount: action.tokenAmount,
+              solAmount: action.solAmount,
+              signature: sig.signature,
+              timestamp: sig.blockTime ? new Date(sig.blockTime * 1000) : new Date(),
+            },
+            update: {},
+          });
+          processed++;
+        } catch {
+          errors++;
+        }
+      }
+
+      return {
+        success: true,
+        message: `Backfilled ${processed} trades${errors > 0 ? ` (${errors} errors)` : ''}`,
+      };
+    } catch (err) {
+      return { success: false, message: `Error: ${err.message}` };
+    }
+  }
+
+  async getPnlAnalysis(address: string): Promise<string> {
+    try {
+      new PublicKey(address);
+    } catch {
+      throw new Error('invalid_address');
+    }
+
+    const trades = await this.prisma.trade.findMany({
+      where: { walletAddress: address },
+      orderBy: { timestamp: 'asc' },
+    });
+
+    if (!trades.length) return '📭 No trades found for PnL analysis.';
+
+    let totalBuyUsd = 0;
+    let totalSellUsd = 0;
+    let pnl = 0;
+
+    for (const trade of trades) {
+      if (trade.type === 'BUY') {
+        totalBuyUsd += trade.totalUsd;
+      } else if (trade.type === 'SELL') {
+        totalSellUsd += trade.totalUsd;
+      }
+    }
+
+    pnl = totalSellUsd - totalBuyUsd;
+    const pnlPct = totalBuyUsd > 0 ? (pnl / totalBuyUsd) * 100 : 0;
+    const emoji = pnl >= 0 ? '📈' : '📉';
+
+    return [
+      `┌─────────────────────────────`,
+      `│ 📊 <b>PnL ANALYSIS</b>`,
+      `│ 👛 ${address.slice(0, 6)}...${address.slice(-4)}`,
+      `└─────────────────────────────\n`,
+      `${emoji} <b>Total PnL: ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} USD</b>`,
+      `� Total Bought: <b>${totalBuyUsd.toFixed(2)} USD</b>`,
+      `📉 Total Sold: <b>${totalSellUsd.toFixed(2)} USD</b>`,
+      `📊 Return: <b>${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</b>`,
+      `🔢 Trades: <b>${trades.length}</b>`,
+    ].join('\n');
+  }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
 
