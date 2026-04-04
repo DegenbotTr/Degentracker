@@ -43,6 +43,7 @@ export declare class SolanaService implements OnModuleInit, OnModuleDestroy {
     private handleTransaction;
     private fetchTokenMeta;
     private detectAction;
+    private formatTransferMessage;
     private formatTradeMessage;
     backfillTrades(address: string, limit: number): Promise<{
         success: boolean;
