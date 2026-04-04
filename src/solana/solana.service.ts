@@ -1270,9 +1270,9 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       : '';
 
     return (
+      labelLine +
       `🔄 <b>SWAP</b>  🔴 <b><u>${fromName}</u></b> <b>${fromAmountFmt}</b>  TO  🟢 <b><u>${toName}</u></b> <b>${toAmountFmt}</b>\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
-      labelLine +
       `👛 <b>Wallet:</b> <code>${walletShort}</code>\n` +
       usdLine +
       fromCaLine +
