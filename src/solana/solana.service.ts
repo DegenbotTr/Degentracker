@@ -831,9 +831,10 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
         action.tokenName = action.outName;
       }
 
-      // Fetch live market price for the primary (non-SOL) token via Jupiter
+      // Fetch live market price + market cap for the primary (non-SOL) token
       const primaryMint = action.inMint ?? action.outMint;
       let marketPrice = 0;
+      let marketCap = 0;
       if (primaryMint) {
         try {
           const jr = await fetch(
@@ -841,6 +842,15 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
           );
           const jd = await jr.json();
           marketPrice = jd?.data?.[primaryMint]?.price ?? 0;
+        } catch {
+          /* best effort */
+        }
+        try {
+          const dr = await fetch(
+            `https://api.dexscreener.com/latest/dex/tokens/${primaryMint}`,
+          );
+          const dd = await dr.json();
+          marketCap = dd?.pairs?.[0]?.fdv ?? 0;
         } catch {
           /* best effort */
         }
@@ -893,7 +903,15 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
           signature,
           action,
           label,
-          { solPrice, marketPrice, txFeeSol, txFeeUsd, txTime, priceImpact },
+          {
+            solPrice,
+            marketPrice,
+            marketCap,
+            txFeeSol,
+            txFeeUsd,
+            txTime,
+            priceImpact,
+          },
         );
 
         const primaryMintForButtons = action.inMint ?? action.outMint;
@@ -1220,6 +1238,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     extra?: {
       solPrice: number;
       marketPrice: number;
+      marketCap: number;
       txFeeSol: number;
       txFeeUsd: number;
       txTime: string | null;
@@ -1269,9 +1288,18 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       ? `🟢 <b>To CA:</b> <code>${action.inMint}</code>\n`
       : '';
 
+    const mc = extra?.marketCap ?? 0;
+    const mcFmt = mc > 0
+      ? mc >= 1_000_000_000
+        ? `MC $${(mc / 1_000_000_000).toFixed(2)}B`
+        : mc >= 1_000_000
+          ? `MC $${(mc / 1_000_000).toFixed(2)}M`
+          : `MC $${(mc / 1_000).toFixed(2)}K`
+      : '';
+
     return (
       labelLine +
-      `🔄 <b>SWAP</b>  🔴 <b><u>${fromName}</u></b> <b>${fromAmountFmt}</b>  TO  🟢 <b><u>${toName}</u></b> <b>${toAmountFmt}</b>\n` +
+      `🔄 <b>SWAP</b>  🔴 <b><u>${fromName}</u></b> <b>${fromAmountFmt}</b>  TO  🟢 <b><u>${toName}</u></b> <b>${toAmountFmt}</b>${mcFmt ? `  📊 <b>${mcFmt}</b>` : ''}\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
       `👛 <b>Wallet:</b> <code>${walletShort}</code>\n` +
       usdLine +

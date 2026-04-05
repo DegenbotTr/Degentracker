@@ -566,24 +566,22 @@ let SolanaService = SolanaService_1 = class SolanaService {
                             inline_keyboard: [
                                 [
                                     {
-                                        text: '🔍 TX on Solscan',
+                                        text: 'TX',
                                         url: `https://solscan.io/tx/${signature}`,
                                     },
                                     {
-                                        text: '👛 Wallet',
+                                        text: 'Wallet',
                                         url: `https://solscan.io/account/${walletAddress}`,
                                     },
-                                ],
-                                ...(action.transferTo
-                                    ? [
-                                        [
+                                    ...(action.transferTo
+                                        ? [
                                             {
-                                                text: '📬 Recipient',
+                                                text: 'Recipient',
                                                 url: `https://solscan.io/account/${action.transferTo}`,
                                             },
-                                        ],
-                                    ]
-                                    : []),
+                                        ]
+                                        : []),
+                                ],
                             ],
                         },
                     })
@@ -623,11 +621,19 @@ let SolanaService = SolanaService_1 = class SolanaService {
             }
             const primaryMint = action.inMint ?? action.outMint;
             let marketPrice = 0;
+            let marketCap = 0;
             if (primaryMint) {
                 try {
                     const jr = await fetch(`https://price.jup.ag/v6/price?ids=${primaryMint}`);
                     const jd = await jr.json();
                     marketPrice = jd?.data?.[primaryMint]?.price ?? 0;
+                }
+                catch {
+                }
+                try {
+                    const dr = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${primaryMint}`);
+                    const dd = await dr.json();
+                    marketCap = dd?.pairs?.[0]?.fdv ?? 0;
                 }
                 catch {
                 }
@@ -664,7 +670,15 @@ let SolanaService = SolanaService_1 = class SolanaService {
                 if (action.usdValue < min)
                     continue;
                 const label = watcher.label ?? '';
-                const message = this.formatTradeMessage(walletAddress, signature, action, label, { solPrice, marketPrice, txFeeSol, txFeeUsd, txTime, priceImpact });
+                const message = this.formatTradeMessage(walletAddress, signature, action, label, {
+                    solPrice,
+                    marketPrice,
+                    marketCap,
+                    txFeeSol,
+                    txFeeUsd,
+                    txTime,
+                    priceImpact,
+                });
                 const primaryMintForButtons = action.inMint ?? action.outMint;
                 this.bot.telegram
                     .sendMessage(chatId, message, {
@@ -870,9 +884,6 @@ let SolanaService = SolanaService_1 = class SolanaService {
     formatTransferMessage(walletAddress, signature, action, label) {
         const walletShort = `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
         const labelLine = label ? `🏷 <b>${label}</b>\n` : '';
-        const toShort = action.transferTo
-            ? `${action.transferTo.slice(0, 6)}...${action.transferTo.slice(-4)}`
-            : 'Unknown';
         const assetLine = action.outMint
             ? `🪙 Token: <b>${action.outName || action.outSymbol}</b>\n` +
                 `🟡 Amount: <b>${action.outAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b>\n` +
@@ -886,12 +897,7 @@ let SolanaService = SolanaService_1 = class SolanaService {
             labelLine +
             `👛 ${walletShort}\n` +
             assetLine +
-            recipientLine +
-            `━━━━━━━━━━━━━━━━━━━━\n` +
-            `🔗 <a href="https://solscan.io/tx/${signature}">View TX</a>` +
-            (action.transferTo
-                ? `  ·  <a href="https://solscan.io/account/${action.transferTo}">${toShort}</a>`
-                : ''));
+            recipientLine);
     }
     formatTradeMessage(walletAddress, signature, action, label, extra) {
         const labelLine = label ? `🏷 <b>${label}</b>\n` : '';
@@ -918,21 +924,23 @@ let SolanaService = SolanaService_1 = class SolanaService {
         const toAmountFmt = action.inAmount.toLocaleString(undefined, {
             maximumFractionDigits: 2,
         });
-        const fromCaShort = action.outMint
-            ? `${action.outMint.slice(0, 5)}...${action.outMint.slice(-5)}`
-            : null;
-        const toCaShort = action.inMint
-            ? `${action.inMint.slice(0, 5)}...${action.inMint.slice(-5)}`
-            : null;
         const fromCaLine = action.outMint
-            ? `🔴 <b>From CA:</b> <code>${action.outMint}</code> <i>(${fromCaShort})</i>\n`
+            ? `🔴 <b>From CA:</b> <code>${action.outMint}</code>\n`
             : '';
         const toCaLine = action.inMint
-            ? `🟢 <b>To CA:</b> <code>${action.inMint}</code> <i>(${toCaShort})</i>\n`
+            ? `🟢 <b>To CA:</b> <code>${action.inMint}</code>\n`
             : '';
-        return (`🔄 <b>SWAP</b>  🔴 <b><u>${fromName}</u></b> <b>${fromAmountFmt}</b>  TO  🟢 <b><u>${toName}</u></b> <b>${toAmountFmt}</b>\n` +
+        const mc = extra?.marketCap ?? 0;
+        const mcFmt = mc > 0
+            ? mc >= 1_000_000_000
+                ? `MC $${(mc / 1_000_000_000).toFixed(2)}B`
+                : mc >= 1_000_000
+                    ? `MC $${(mc / 1_000_000).toFixed(2)}M`
+                    : `MC $${(mc / 1_000).toFixed(2)}K`
+            : '';
+        return (labelLine +
+            `🔄 <b>SWAP</b>  🔴 <b><u>${fromName}</u></b> <b>${fromAmountFmt}</b>  TO  🟢 <b><u>${toName}</u></b> <b>${toAmountFmt}</b>${mcFmt ? `  📊 <b>${mcFmt}</b>` : ''}\n` +
             `━━━━━━━━━━━━━━━━━━━━\n` +
-            labelLine +
             `👛 <b>Wallet:</b> <code>${walletShort}</code>\n` +
             usdLine +
             fromCaLine +
