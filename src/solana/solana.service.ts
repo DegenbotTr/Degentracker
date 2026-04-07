@@ -395,6 +395,34 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     return user?.minTradeSize ?? 0;
   }
 
+  // ─── Pause / Unpause ─────────────────────────────────────────────────────────
+
+  async pauseWallet(chatId: number, address: string): Promise<boolean> {
+    const result = await this.prisma.watchedWallet.updateMany({
+      where: { userId: chatId, walletAddress: address },
+      data: { paused: true },
+    });
+    return result.count > 0;
+  }
+
+  async unpauseWallet(chatId: number, address: string): Promise<boolean> {
+    const result = await this.prisma.watchedWallet.updateMany({
+      where: { userId: chatId, walletAddress: address },
+      data: { paused: false },
+    });
+    return result.count > 0;
+  }
+
+  async isWalletPaused(chatId: number, address: string): Promise<boolean> {
+    const row = await this.prisma.watchedWallet.findUnique({
+      where: {
+        userId_walletAddress: { userId: chatId, walletAddress: address },
+      },
+      select: { paused: true },
+    });
+    return row?.paused ?? false;
+  }
+
   // ─── User Tracking ───────────────────────────────────────────────────────────
 
   async trackUser(chatId: number, username: string): Promise<void> {
@@ -750,6 +778,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
         });
         for (const watcher of watchers) {
           const chatId = Number(watcher.userId);
+          if (watcher.paused) continue;
           const label = watcher.label ?? '';
           const message = this.formatTransferMessage(
             walletAddress,
@@ -897,6 +926,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
         const chatId = Number(watcher.userId);
         const min = watcher.user.minTradeSize;
         if (action.usdValue < min) continue;
+        if (watcher.paused) continue;
 
         const label = watcher.label ?? '';
         const message = this.formatTradeMessage(

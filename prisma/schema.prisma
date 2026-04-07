@@ -38,6 +38,7 @@ model WatchedWallet {
   walletAddress  String
   label          String?
   tags           String[]         @default([]) // Array of tags: "whale", "degen", "smart-money", etc.
+  paused         Boolean          @default(false)
 
   @@id([userId, walletAddress]) // Composite primary key
 }

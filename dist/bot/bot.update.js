@@ -61,7 +61,7 @@ function mainMenuKeyboard() {
         ],
     };
 }
-function walletKeyboard(address) {
+function walletKeyboard(address, paused = false) {
     return {
         inline_keyboard: [
             [
@@ -79,7 +79,15 @@ function walletKeyboard(address) {
                 { text: '🏷 Label', callback_data: `wallet_label:${address}` },
                 { text: '🏴 Tags', callback_data: `wallet_tags:${address}` },
             ],
-            [{ text: '🗑 Unwatch', callback_data: `wallet_unwatch:${address}` }],
+            [
+                {
+                    text: paused ? '▶️ Unpause' : '⏸ Pause',
+                    callback_data: paused
+                        ? `wallet_unpause:${address}`
+                        : `wallet_pause:${address}`,
+                },
+                { text: '🗑 Unwatch', callback_data: `wallet_unwatch:${address}` },
+            ],
             [
                 { text: '🔍 Solscan', url: `https://solscan.io/account/${address}` },
                 {
@@ -340,9 +348,11 @@ let BotUpdate = class BotUpdate {
         await ctx.answerCbQuery();
         const address = ctx.match[1];
         const label = await this.solanaService.getWalletLabel(ctx.chat.id, address);
+        const paused = await this.solanaService.isWalletPaused(ctx.chat.id, address);
         const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
         const name = label ? `🏷 <b>${label}</b>\n` : '';
-        await ctx.editMessageText(`${name}👛 <a href="https://solscan.io/account/${address}">${short}</a>\n<code>${address}</code>`, { parse_mode: 'HTML', reply_markup: walletKeyboard(address) });
+        const pausedLine = paused ? `⏸ <i>Notifications paused</i>\n` : '';
+        await ctx.editMessageText(`${name}${pausedLine}👛 <a href="https://solscan.io/account/${address}">${short}</a>\n<code>${address}</code>`, { parse_mode: 'HTML', reply_markup: walletKeyboard(address, paused) });
     }
     async onWalletPortfolio(ctx) {
         await ctx.answerCbQuery();
@@ -373,6 +383,24 @@ let BotUpdate = class BotUpdate {
     async onWalletUnwatch(ctx) {
         await ctx.answerCbQuery();
         await this.removeWallet(ctx, ctx.match[1]);
+    }
+    async onWalletPause(ctx) {
+        await ctx.answerCbQuery();
+        const address = ctx.match[1];
+        await this.solanaService.pauseWallet(ctx.chat.id, address);
+        const label = await this.solanaService.getWalletLabel(ctx.chat.id, address);
+        const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
+        const name = label ? `🏷 <b>${label}</b>\n` : '';
+        await ctx.editMessageText(`${name}⏸ <i>Notifications paused</i>\n👛 <a href="https://solscan.io/account/${address}">${short}</a>\n<code>${address}</code>`, { parse_mode: 'HTML', reply_markup: walletKeyboard(address, true) });
+    }
+    async onWalletUnpause(ctx) {
+        await ctx.answerCbQuery();
+        const address = ctx.match[1];
+        await this.solanaService.unpauseWallet(ctx.chat.id, address);
+        const label = await this.solanaService.getWalletLabel(ctx.chat.id, address);
+        const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
+        const name = label ? `🏷 <b>${label}</b>\n` : '';
+        await ctx.editMessageText(`${name}👛 <a href="https://solscan.io/account/${address}">${short}</a>\n<code>${address}</code>`, { parse_mode: 'HTML', reply_markup: walletKeyboard(address, false) });
     }
     async onWalletLabel(ctx) {
         await ctx.answerCbQuery();
@@ -765,6 +793,20 @@ __decorate([
     __metadata("design:paramtypes", [telegraf_1.Context]),
     __metadata("design:returntype", Promise)
 ], BotUpdate.prototype, "onWalletUnwatch", null);
+__decorate([
+    (0, nestjs_telegraf_1.Action)(/^wallet_pause:(.+)$/),
+    __param(0, (0, nestjs_telegraf_1.Ctx)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [telegraf_1.Context]),
+    __metadata("design:returntype", Promise)
+], BotUpdate.prototype, "onWalletPause", null);
+__decorate([
+    (0, nestjs_telegraf_1.Action)(/^wallet_unpause:(.+)$/),
+    __param(0, (0, nestjs_telegraf_1.Ctx)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [telegraf_1.Context]),
+    __metadata("design:returntype", Promise)
+], BotUpdate.prototype, "onWalletUnpause", null);
 __decorate([
     (0, nestjs_telegraf_1.Action)(/^wallet_label:(.+)$/),
     __param(0, (0, nestjs_telegraf_1.Ctx)()),

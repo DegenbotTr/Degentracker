@@ -309,6 +309,29 @@ let SolanaService = SolanaService_1 = class SolanaService {
         });
         return user?.minTradeSize ?? 0;
     }
+    async pauseWallet(chatId, address) {
+        const result = await this.prisma.watchedWallet.updateMany({
+            where: { userId: chatId, walletAddress: address },
+            data: { paused: true },
+        });
+        return result.count > 0;
+    }
+    async unpauseWallet(chatId, address) {
+        const result = await this.prisma.watchedWallet.updateMany({
+            where: { userId: chatId, walletAddress: address },
+            data: { paused: false },
+        });
+        return result.count > 0;
+    }
+    async isWalletPaused(chatId, address) {
+        const row = await this.prisma.watchedWallet.findUnique({
+            where: {
+                userId_walletAddress: { userId: chatId, walletAddress: address },
+            },
+            select: { paused: true },
+        });
+        return row?.paused ?? false;
+    }
     async trackUser(chatId, username) {
         await this.prisma.user.upsert({
             where: { id: chatId },
@@ -556,6 +579,8 @@ let SolanaService = SolanaService_1 = class SolanaService {
                 });
                 for (const watcher of watchers) {
                     const chatId = Number(watcher.userId);
+                    if (watcher.paused)
+                        continue;
                     const label = watcher.label ?? '';
                     const message = this.formatTransferMessage(walletAddress, signature, action, label);
                     this.bot.telegram
@@ -633,7 +658,8 @@ let SolanaService = SolanaService_1 = class SolanaService {
                 try {
                     const dr = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${primaryMint}`);
                     const dd = await dr.json();
-                    marketCap = dd?.pairs?.[0]?.fdv ?? 0;
+                    const pair = (dd?.pairs ?? []).find((p) => p?.fdv > 0);
+                    marketCap = pair?.fdv ?? 0;
                 }
                 catch {
                 }
@@ -668,6 +694,8 @@ let SolanaService = SolanaService_1 = class SolanaService {
                 const chatId = Number(watcher.userId);
                 const min = watcher.user.minTradeSize;
                 if (action.usdValue < min)
+                    continue;
+                if (watcher.paused)
                     continue;
                 const label = watcher.label ?? '';
                 const message = this.formatTradeMessage(walletAddress, signature, action, label, {
