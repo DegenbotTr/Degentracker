@@ -90,13 +90,6 @@ function walletKeyboard(address, paused = false) {
                 },
                 { text: '🗑 Unwatch', callback_data: `wallet_unwatch:${address}` },
             ],
-            [
-                { text: '🔍 Solscan', url: `https://solscan.io/account/${address}` },
-                {
-                    text: '📈 DexScreener',
-                    url: `https://dexscreener.com/solana/${address}`,
-                },
-            ],
             [{ text: '◀️ Back to List', callback_data: 'menu_list' }],
         ],
     };
@@ -425,6 +418,16 @@ let BotUpdate = class BotUpdate {
         const existing = await this.solanaService.getWalletLabel(ctx.chat.id, address);
         const current = existing ? ` (current: <b>${existing}</b>)` : '';
         await ctx.reply(`🏷 Enter a name for this wallet${current}:\n<code>${address}</code>`, { parse_mode: 'HTML' });
+    }
+    async onWalletTags(ctx) {
+        await ctx.answerCbQuery();
+        const address = ctx.match[1];
+        const tags = await this.solanaService.getWalletTags(ctx.chat.id, address);
+        const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
+        const tagList = tags.length > 0 ? tags.map((t) => `• ${t}`).join('\n') : 'No tags yet.';
+        await ctx.reply(`🏴 <b>Tags for ${short}</b>\n\n${tagList}\n\n` +
+            `To add: <code>/tag ${address} tagname</code>\n` +
+            `To remove: <code>/untag ${address} tagname</code>`, { parse_mode: 'HTML' });
     }
     async onText(ctx, text) {
         if (text.startsWith('/'))
@@ -860,6 +863,13 @@ __decorate([
     __metadata("design:paramtypes", [telegraf_1.Context]),
     __metadata("design:returntype", Promise)
 ], BotUpdate.prototype, "onWalletLabel", null);
+__decorate([
+    (0, nestjs_telegraf_1.Action)(/^wallet_tags:(.+)$/),
+    __param(0, (0, nestjs_telegraf_1.Ctx)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [telegraf_1.Context]),
+    __metadata("design:returntype", Promise)
+], BotUpdate.prototype, "onWalletTags", null);
 __decorate([
     (0, nestjs_telegraf_1.On)('text'),
     __param(0, (0, nestjs_telegraf_1.Ctx)()),

@@ -110,13 +110,6 @@ function walletKeyboard(address: string, paused = false): InlineKeyboardMarkup {
         },
         { text: '🗑 Unwatch', callback_data: `wallet_unwatch:${address}` },
       ],
-      [
-        { text: '🔍 Solscan', url: `https://solscan.io/account/${address}` },
-        {
-          text: '📈 DexScreener',
-          url: `https://dexscreener.com/solana/${address}`,
-        },
-      ],
       [{ text: '◀️ Back to List', callback_data: 'menu_list' }],
     ],
   };
@@ -634,6 +627,22 @@ export class BotUpdate {
     const current = existing ? ` (current: <b>${existing}</b>)` : '';
     await ctx.reply(
       `🏷 Enter a name for this wallet${current}:\n<code>${address}</code>`,
+      { parse_mode: 'HTML' },
+    );
+  }
+
+  @Action(/^wallet_tags:(.+)$/)
+  async onWalletTags(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery();
+    const address = (ctx as any).match[1];
+    const tags = await this.solanaService.getWalletTags(ctx.chat.id, address);
+    const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
+    const tagList =
+      tags.length > 0 ? tags.map((t) => `• ${t}`).join('\n') : 'No tags yet.';
+    await ctx.reply(
+      `🏴 <b>Tags for ${short}</b>\n\n${tagList}\n\n` +
+        `To add: <code>/tag ${address} tagname</code>\n` +
+        `To remove: <code>/untag ${address} tagname</code>`,
       { parse_mode: 'HTML' },
     );
   }
