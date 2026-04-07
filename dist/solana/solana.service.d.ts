@@ -38,6 +38,8 @@ export declare class SolanaService implements OnModuleInit, OnModuleDestroy {
     pauseWallet(chatId: number, address: string): Promise<boolean>;
     unpauseWallet(chatId: number, address: string): Promise<boolean>;
     isWalletPaused(chatId: number, address: string): Promise<boolean>;
+    setWalletMinTradeSize(chatId: number, address: string, usd: number | null): Promise<boolean>;
+    getWalletMinTradeSize(chatId: number, address: string): Promise<number | null>;
     trackUser(chatId: number, username: string): Promise<void>;
     getStats(): Promise<string>;
     getPortfolio(address: string): Promise<string>;

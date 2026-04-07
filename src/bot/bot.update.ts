@@ -38,11 +38,13 @@ type PendingAction =
   | 'tag_name'
   | 'untag_address'
   | 'untag_name'
-  | 'filter_tag';
+  | 'filter_tag'
+  | 'wallet_minsize';
 
 const pendingAction = new Map<number, PendingAction>();
 const pendingLabelAddress = new Map<number, string>();
 const pendingTagAddress = new Map<number, string>();
+const pendingWalletMinsizeAddress = new Map<number, string>();
 
 // ─── Keyboards ────────────────────────────────────────────────────────────────
 
@@ -99,6 +101,7 @@ function walletKeyboard(address: string, paused = false): InlineKeyboardMarkup {
         { text: '🏴 Tags', callback_data: `wallet_tags:${address}` },
       ],
       [
+        { text: '⚙️ Min Size', callback_data: `wallet_minsize:${address}` },
         {
           text: paused ? '▶️ Unpause' : '⏸ Pause',
           callback_data: paused
@@ -597,6 +600,27 @@ export class BotUpdate {
     );
   }
 
+  @Action(/^wallet_minsize:(.+)$/)
+  async onWalletMinSize(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery();
+    const address = (ctx as any).match[1];
+    const current = await this.solanaService.getWalletMinTradeSize(
+      ctx.chat.id,
+      address,
+    );
+    const global = await this.solanaService.getMinTradeSize(ctx.chat.id);
+    const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
+    pendingWalletMinsizeAddress.set(ctx.chat.id, address);
+    pendingAction.set(ctx.chat.id, 'wallet_minsize');
+    await ctx.reply(
+      `⚙️ <b>Min Trade Size for ${short}</b>\n\n` +
+        `Global setting: <b>${global > 0 ? `$${global}` : 'All trades'}</b>\n` +
+        `Wallet setting: <b>${current !== null ? `$${current}` : 'Using global'}</b>\n\n` +
+        `Enter a USD amount, <b>0</b> for all trades, or <b>clear</b> to use global:`,
+      { parse_mode: 'HTML' },
+    );
+  }
+
   @Action(/^wallet_label:(.+)$/)
   async onWalletLabel(@Ctx() ctx: Context): Promise<void> {
     await ctx.answerCbQuery();
@@ -700,6 +724,37 @@ export class BotUpdate {
         `✅ <b>Label saved</b>\n\n👛 ${short} is now called <b>${input}</b>`,
         { parse_mode: 'HTML' },
       );
+    } else if (action === 'wallet_minsize') {
+      const address = pendingWalletMinsizeAddress.get(chatId);
+      pendingWalletMinsizeAddress.delete(chatId);
+      if (!address) {
+        await ctx.reply('❌ Something went wrong. Try again.');
+        return;
+      }
+      const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
+      if (input.toLowerCase() === 'clear') {
+        await this.solanaService.setWalletMinTradeSize(chatId, address, null);
+        await ctx.reply(
+          `✅ <b>Wallet min size cleared</b>\n\n${short} will now use your global setting.`,
+          { parse_mode: 'HTML' },
+        );
+      } else {
+        const value = parseFloat(input);
+        if (isNaN(value) || value < 0) {
+          await ctx.reply(
+            `❌ Enter a number like <code>100</code>, <code>0</code> for all, or <code>clear</code>.`,
+            { parse_mode: 'HTML' },
+          );
+          return;
+        }
+        await this.solanaService.setWalletMinTradeSize(chatId, address, value);
+        await ctx.reply(
+          value === 0
+            ? `✅ <b>${short}</b> will now alert on all trades.`
+            : `✅ <b>${short}</b> min alert size set to <b>$${value}</b>.`,
+          { parse_mode: 'HTML' },
+        );
+      }
     }
   }
 

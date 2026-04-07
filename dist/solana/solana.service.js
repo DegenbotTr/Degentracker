@@ -332,6 +332,22 @@ let SolanaService = SolanaService_1 = class SolanaService {
         });
         return row?.paused ?? false;
     }
+    async setWalletMinTradeSize(chatId, address, usd) {
+        const result = await this.prisma.watchedWallet.updateMany({
+            where: { userId: chatId, walletAddress: address },
+            data: { minTradeSize: usd },
+        });
+        return result.count > 0;
+    }
+    async getWalletMinTradeSize(chatId, address) {
+        const row = await this.prisma.watchedWallet.findUnique({
+            where: {
+                userId_walletAddress: { userId: chatId, walletAddress: address },
+            },
+            select: { minTradeSize: true },
+        });
+        return row?.minTradeSize ?? null;
+    }
     async trackUser(chatId, username) {
         await this.prisma.user.upsert({
             where: { id: chatId },
@@ -692,7 +708,7 @@ let SolanaService = SolanaService_1 = class SolanaService {
             });
             for (const watcher of watchers) {
                 const chatId = Number(watcher.userId);
-                const min = watcher.user.minTradeSize;
+                const min = watcher.minTradeSize ?? watcher.user.minTradeSize;
                 if (action.usdValue < min)
                     continue;
                 if (watcher.paused)

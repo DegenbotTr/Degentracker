@@ -30,6 +30,7 @@ const persistentKeyboard = {
 const pendingAction = new Map();
 const pendingLabelAddress = new Map();
 const pendingTagAddress = new Map();
+const pendingWalletMinsizeAddress = new Map();
 const MAIN_MENU_TEXT = `🏠 <b>Sol Wallet Watcher</b>\n` +
     `━━━━━━━━━━━━━━━━━━━━\n` +
     `👁 <b>Watch Wallet</b> — track a new wallet\n` +
@@ -80,6 +81,7 @@ function walletKeyboard(address, paused = false) {
                 { text: '🏴 Tags', callback_data: `wallet_tags:${address}` },
             ],
             [
+                { text: '⚙️ Min Size', callback_data: `wallet_minsize:${address}` },
                 {
                     text: paused ? '▶️ Unpause' : '⏸ Pause',
                     callback_data: paused
@@ -402,6 +404,19 @@ let BotUpdate = class BotUpdate {
         const name = label ? `🏷 <b>${label}</b>\n` : '';
         await ctx.editMessageText(`${name}👛 <a href="https://solscan.io/account/${address}">${short}</a>\n<code>${address}</code>`, { parse_mode: 'HTML', reply_markup: walletKeyboard(address, false) });
     }
+    async onWalletMinSize(ctx) {
+        await ctx.answerCbQuery();
+        const address = ctx.match[1];
+        const current = await this.solanaService.getWalletMinTradeSize(ctx.chat.id, address);
+        const global = await this.solanaService.getMinTradeSize(ctx.chat.id);
+        const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
+        pendingWalletMinsizeAddress.set(ctx.chat.id, address);
+        pendingAction.set(ctx.chat.id, 'wallet_minsize');
+        await ctx.reply(`⚙️ <b>Min Trade Size for ${short}</b>\n\n` +
+            `Global setting: <b>${global > 0 ? `$${global}` : 'All trades'}</b>\n` +
+            `Wallet setting: <b>${current !== null ? `$${current}` : 'Using global'}</b>\n\n` +
+            `Enter a USD amount, <b>0</b> for all trades, or <b>clear</b> to use global:`, { parse_mode: 'HTML' });
+    }
     async onWalletLabel(ctx) {
         await ctx.answerCbQuery();
         const address = ctx.match[1];
@@ -483,6 +498,30 @@ let BotUpdate = class BotUpdate {
             }
             const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
             await ctx.reply(`✅ <b>Label saved</b>\n\n👛 ${short} is now called <b>${input}</b>`, { parse_mode: 'HTML' });
+        }
+        else if (action === 'wallet_minsize') {
+            const address = pendingWalletMinsizeAddress.get(chatId);
+            pendingWalletMinsizeAddress.delete(chatId);
+            if (!address) {
+                await ctx.reply('❌ Something went wrong. Try again.');
+                return;
+            }
+            const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
+            if (input.toLowerCase() === 'clear') {
+                await this.solanaService.setWalletMinTradeSize(chatId, address, null);
+                await ctx.reply(`✅ <b>Wallet min size cleared</b>\n\n${short} will now use your global setting.`, { parse_mode: 'HTML' });
+            }
+            else {
+                const value = parseFloat(input);
+                if (isNaN(value) || value < 0) {
+                    await ctx.reply(`❌ Enter a number like <code>100</code>, <code>0</code> for all, or <code>clear</code>.`, { parse_mode: 'HTML' });
+                    return;
+                }
+                await this.solanaService.setWalletMinTradeSize(chatId, address, value);
+                await ctx.reply(value === 0
+                    ? `✅ <b>${short}</b> will now alert on all trades.`
+                    : `✅ <b>${short}</b> min alert size set to <b>$${value}</b>.`, { parse_mode: 'HTML' });
+            }
         }
     }
     async addWallet(ctx, address) {
@@ -807,6 +846,13 @@ __decorate([
     __metadata("design:paramtypes", [telegraf_1.Context]),
     __metadata("design:returntype", Promise)
 ], BotUpdate.prototype, "onWalletUnpause", null);
+__decorate([
+    (0, nestjs_telegraf_1.Action)(/^wallet_minsize:(.+)$/),
+    __param(0, (0, nestjs_telegraf_1.Ctx)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [telegraf_1.Context]),
+    __metadata("design:returntype", Promise)
+], BotUpdate.prototype, "onWalletMinSize", null);
 __decorate([
     (0, nestjs_telegraf_1.Action)(/^wallet_label:(.+)$/),
     __param(0, (0, nestjs_telegraf_1.Ctx)()),

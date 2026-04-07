@@ -423,6 +423,31 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     return row?.paused ?? false;
   }
 
+  async setWalletMinTradeSize(
+    chatId: number,
+    address: string,
+    usd: number | null,
+  ): Promise<boolean> {
+    const result = await this.prisma.watchedWallet.updateMany({
+      where: { userId: chatId, walletAddress: address },
+      data: { minTradeSize: usd },
+    });
+    return result.count > 0;
+  }
+
+  async getWalletMinTradeSize(
+    chatId: number,
+    address: string,
+  ): Promise<number | null> {
+    const row = await this.prisma.watchedWallet.findUnique({
+      where: {
+        userId_walletAddress: { userId: chatId, walletAddress: address },
+      },
+      select: { minTradeSize: true },
+    });
+    return row?.minTradeSize ?? null;
+  }
+
   // ─── User Tracking ───────────────────────────────────────────────────────────
 
   async trackUser(chatId: number, username: string): Promise<void> {
@@ -924,7 +949,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
 
       for (const watcher of watchers) {
         const chatId = Number(watcher.userId);
-        const min = watcher.user.minTradeSize;
+        const min = watcher.minTradeSize ?? watcher.user.minTradeSize;
         if (action.usdValue < min) continue;
         if (watcher.paused) continue;
 

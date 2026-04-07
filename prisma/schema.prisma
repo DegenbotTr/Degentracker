@@ -39,6 +39,7 @@ model WatchedWallet {
   label          String?
   tags           String[]         @default([]) // Array of tags: "whale", "degen", "smart-money", etc.
   paused         Boolean          @default(false)
+  minTradeSize   Float?           // per-wallet override; null = use global user setting
 
   @@id([userId, walletAddress]) // Composite primary key
 }

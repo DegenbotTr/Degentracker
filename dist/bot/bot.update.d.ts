@@ -37,6 +37,7 @@ export declare class BotUpdate {
     onWalletUnwatch(ctx: Context): Promise<void>;
     onWalletPause(ctx: Context): Promise<void>;
     onWalletUnpause(ctx: Context): Promise<void>;
+    onWalletMinSize(ctx: Context): Promise<void>;
     onWalletLabel(ctx: Context): Promise<void>;
     onText(ctx: Context, text: string): Promise<void>;
     private addWallet;
