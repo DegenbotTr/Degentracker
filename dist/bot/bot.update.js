@@ -510,8 +510,14 @@ let BotUpdate = class BotUpdate {
             return;
         }
         const action = pendingAction.get(chatId);
-        if (!action)
+        if (!action) {
+            const trimmed = text.trim();
+            if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(trimmed)) {
+                await this.showTokenInfo(ctx, trimmed);
+                return;
+            }
             return;
+        }
         pendingAction.delete(chatId);
         const input = text.trim();
         if (action === 'watch')
@@ -695,6 +701,33 @@ let BotUpdate = class BotUpdate {
         await ctx.reply(value === 0
             ? `✅ <b>Filter removed</b> — you'll receive all trade alerts.`
             : `✅ <b>Min alert size: $${value}</b>\n\nOnly trades above this value will notify you.`, { parse_mode: 'HTML', reply_markup: mainMenuKeyboard() });
+    }
+    async showTokenInfo(ctx, mint) {
+        const loading = await ctx.reply('🔍 Fetching token info...');
+        try {
+            const { text, imageUrl } = await this.solanaService.getTokenInfo(mint);
+            const keyboard = {
+                inline_keyboard: [[
+                        { text: 'Chart', url: `https://dexscreener.com/solana/${mint}` },
+                        { text: 'Birdeye', url: `https://birdeye.so/token/${mint}?chain=solana` },
+                        { text: 'Solscan', url: `https://solscan.io/token/${mint}` },
+                    ]],
+            };
+            await ctx.telegram.deleteMessage(ctx.chat.id, loading.message_id).catch(() => { });
+            if (imageUrl) {
+                await ctx.replyWithPhoto(imageUrl, {
+                    caption: text,
+                    parse_mode: 'HTML',
+                    reply_markup: keyboard,
+                });
+            }
+            else {
+                await ctx.reply(text, { parse_mode: 'HTML', reply_markup: keyboard });
+            }
+        }
+        catch {
+            await ctx.telegram.editMessageText(ctx.chat.id, loading.message_id, undefined, `❌ Could not fetch token info. Make sure it's a valid Solana token address.`, { parse_mode: 'HTML' });
+        }
     }
 };
 exports.BotUpdate = BotUpdate;

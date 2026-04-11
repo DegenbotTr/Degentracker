@@ -751,7 +751,15 @@ export class BotUpdate {
     }
 
     const action = pendingAction.get(chatId);
-    if (!action) return;
+    if (!action) {
+      // Auto-detect pasted Solana token address (base58, 32-44 chars, no spaces)
+      const trimmed = text.trim();
+      if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(trimmed)) {
+        await this.showTokenInfo(ctx, trimmed);
+        return;
+      }
+      return;
+    }
     pendingAction.delete(chatId);
     const input = text.trim();
 
@@ -1020,5 +1028,35 @@ export class BotUpdate {
         : `✅ <b>Min alert size: $${value}</b>\n\nOnly trades above this value will notify you.`,
       { parse_mode: 'HTML', reply_markup: mainMenuKeyboard() },
     );
+  }
+
+  private async showTokenInfo(ctx: Context, mint: string): Promise<void> {
+    const loading = await ctx.reply('🔍 Fetching token info...');
+    try {
+      const { text, imageUrl } = await this.solanaService.getTokenInfo(mint);
+      const keyboard = {
+        inline_keyboard: [[
+          { text: 'Chart', url: `https://dexscreener.com/solana/${mint}` },
+          { text: 'Birdeye', url: `https://birdeye.so/token/${mint}?chain=solana` },
+          { text: 'Solscan', url: `https://solscan.io/token/${mint}` },
+        ]],
+      };
+      await ctx.telegram.deleteMessage(ctx.chat.id, (loading as any).message_id).catch(() => {});
+      if (imageUrl) {
+        await ctx.replyWithPhoto(imageUrl, {
+          caption: text,
+          parse_mode: 'HTML',
+          reply_markup: keyboard,
+        });
+      } else {
+        await ctx.reply(text, { parse_mode: 'HTML', reply_markup: keyboard });
+      }
+    } catch {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id, (loading as any).message_id, undefined,
+        `❌ Could not fetch token info. Make sure it's a valid Solana token address.`,
+        { parse_mode: 'HTML' },
+      );
+    }
   }
 }

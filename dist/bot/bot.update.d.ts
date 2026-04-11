@@ -48,4 +48,5 @@ export declare class BotUpdate {
     private showPnlAnalysis;
     private showPrice;
     private setMinSize;
+    private showTokenInfo;
 }

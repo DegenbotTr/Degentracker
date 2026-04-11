@@ -743,6 +743,120 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     return lines.join('\n');
   }
 
+  // ─── Token Info Card ─────────────────────────────────────────────────────────
+
+  async getTokenInfo(
+    mint: string,
+  ): Promise<{ text: string; imageUrl: string | null }> {
+    // Fetch from DexScreener and Helius in parallel
+    const [dsRes, heliusRes] = await Promise.allSettled([
+      fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`).then((r) =>
+        r.json(),
+      ),
+      fetch(`https://mainnet.helius-rpc.com/?api-key=${this.apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getAsset',
+          params: { id: mint },
+        }),
+      }).then((r) => r.json()),
+    ]);
+
+    const ds = dsRes.status === 'fulfilled' ? dsRes.value : null;
+    const helius = heliusRes.status === 'fulfilled' ? heliusRes.value : null;
+
+    // Pick the most liquid pair from DexScreener
+    const pairs: any[] = ds?.pairs ?? [];
+    const pair = pairs.sort(
+      (a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0),
+    )[0];
+
+    if (!pair) {
+      return {
+        text: `❌ No trading data found for this token.`,
+        imageUrl: null,
+      };
+    }
+
+    const token = pair.baseToken ?? {};
+    const name = token.name || helius?.result?.content?.metadata?.name || '???';
+    const symbol =
+      token.symbol || helius?.result?.content?.metadata?.symbol || '???';
+    const price: number = parseFloat(pair.priceUsd ?? '0');
+    const mc: number = pair.fdv ?? 0;
+    const vol24: number = pair.volume?.h24 ?? 0;
+    const liq: number = pair.liquidity?.usd ?? 0;
+    const priceChange1h: number = pair.priceChange?.h1 ?? 0;
+    const priceChange24h: number = pair.priceChange?.h24 ?? 0;
+    const dex = pair.dexId ?? '';
+    const pairAddr = pair.pairAddress ?? '';
+
+    // Supply from Helius
+    const tokenInfo = helius?.result?.token_info;
+    const supply: number = tokenInfo?.supply
+      ? tokenInfo.supply / Math.pow(10, tokenInfo.decimals ?? 0)
+      : 0;
+
+    // Image
+    const imageUrl: string | null =
+      helius?.result?.content?.links?.image ||
+      helius?.result?.content?.files?.[0]?.uri ||
+      pair.info?.imageUrl ||
+      null;
+
+    const fmt = (n: number) =>
+      n >= 1_000_000_000
+        ? `$${(n / 1_000_000_000).toFixed(2)}B`
+        : n >= 1_000_000
+          ? `$${(n / 1_000_000).toFixed(2)}M`
+          : n >= 1_000
+            ? `$${(n / 1_000).toFixed(1)}K`
+            : `$${n.toFixed(2)}`;
+
+    const fmtPrice = (p: number) =>
+      p === 0
+        ? '$0'
+        : p < 0.000001
+          ? `$${p.toExponential(3)}`
+          : p < 0.01
+            ? `$${p.toFixed(8)}`
+            : `$${p.toFixed(4)}`;
+
+    const changeStr = (c: number) =>
+      c >= 0 ? `🟢 +${c.toFixed(1)}%` : `🔴 ${c.toFixed(1)}%`;
+
+    const supplyFmt =
+      supply > 0
+        ? supply >= 1_000_000_000
+          ? `${(supply / 1_000_000_000).toFixed(2)}B`
+          : supply >= 1_000_000
+            ? `${(supply / 1_000_000).toFixed(2)}M`
+            : supply.toLocaleString(undefined, { maximumFractionDigits: 0 })
+        : 'N/A';
+
+    const mintShort = `${mint.slice(0, 6)}...${mint.slice(-4)}`;
+
+    const text =
+      `🪙 <b>${name}</b> (<b>$${symbol}</b>)\n` +
+      `<code>${mint}</code>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `📊 <b>Stats</b>\n` +
+      `├ USD    <b>${fmtPrice(price)}</b>\n` +
+      `├ MC     <b>${fmt(mc)}</b>\n` +
+      `├ Vol    <b>${fmt(vol24)}</b>\n` +
+      `├ LP     <b>${fmt(liq)}</b>\n` +
+      `├ Sup    <b>${supplyFmt}</b>\n` +
+      `├ 1H     ${changeStr(priceChange1h)}\n` +
+      `└ 24H    ${changeStr(priceChange24h)}\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `🏦 DEX: <b>${dex.toUpperCase()}</b>`;
+
+    return { text, imageUrl };
+  }
+
   // ─── Price Check ─────────────────────────────────────────────────────────────
 
   async getTokenPrice(mintOrSymbol: string): Promise<string> {
