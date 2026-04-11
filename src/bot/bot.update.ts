@@ -187,6 +187,14 @@ export class BotUpdate {
     await this.trackUser(ctx);
     const username = (ctx.from as any)?.first_name || 'Trader';
 
+    // Handle deep link: /start token_MINTADDRESS
+    const payload = (ctx.message as any)?.text?.split(' ')[1];
+    if (payload?.startsWith('token_')) {
+      const mint = payload.slice(6);
+      await this.showTokenInfo(ctx, mint);
+      return;
+    }
+
     if (isGroup(ctx)) {
       await ctx.reply(
         `👁 <b>Sol Wallet Watcher</b> is now active in this group!\n\n` +
@@ -333,13 +341,12 @@ export class BotUpdate {
   async onTrending(@Ctx() ctx: Context): Promise<void> {
     const replyToId = (ctx.message as any)?.message_id;
     const tokens = await this.solanaService.getTrendingTokens(ctx.chat.id);
-
-    const medals = ['🥇', '🥈', '🥉'];
     const groupName = (ctx.chat as any)?.title ?? 'this group';
+    const botUsername = process.env.BOT_USERNAME ?? '';
 
     if (tokens.length === 0) {
       await ctx.reply(
-        `🔥 <b>Trending Tokens [1D]</b>\n└ ${groupName}\n\nNo tokens called in the past 24 hours.`,
+        `⚡ <b>Trending Tokens (1D)</b>\n└ ${groupName}\n\nNo tokens called in the past 24 hours.`,
         {
           parse_mode: 'HTML',
           reply_parameters: { message_id: replyToId },
@@ -348,23 +355,35 @@ export class BotUpdate {
       return;
     }
 
+    const total = tokens.reduce((s, t) => s + t.count, 0);
+
     const list = tokens
       .map((t, i) => {
-        const rank = medals[i] ?? `${i + 1}.`;
         const label = t.symbol
           ? `$${t.symbol}`
           : `${t.mint.slice(0, 6)}...${t.mint.slice(-4)}`;
-        const times = t.count > 1 ? ` <i>(×${t.count})</i>` : '';
-        return `${rank} <b>${label}</b>${times}`;
+        const times = t.count > 1 ? ` x${t.count}` : '';
+        return `${i + 1}: ${label}${times}`;
       })
       .join('\n');
 
-    const total = tokens.reduce((s, t) => s + t.count, 0);
+    const buttons = tokens.map((t) => {
+      const label = t.symbol
+        ? `$${t.symbol}`
+        : `${t.mint.slice(0, 6)}...${t.mint.slice(-4)}`;
+      return [
+        {
+          text: `🔍 ${label}`,
+          url: `https://t.me/${botUsername}?start=token_${t.mint}`,
+        },
+      ];
+    });
 
     await ctx.reply(
-      `🔥 <b>Trending Tokens [1D]</b>\n└ ${groupName}\n\n${list}\n\nℹ️ In the past <b>1D</b> <b>${total}</b> token${total !== 1 ? 's were' : ' was'} called.`,
+      `⚡ <b>Trending Tokens (1D)</b>\n└ ${groupName}\n\n<code>${list}</code>\n\nℹ️ In the past <b>1D</b> <b>${total}</b> token${total !== 1 ? 's have' : ' has'} been queried.`,
       {
         parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: buttons },
         reply_parameters: { message_id: replyToId },
       } as any,
     );
