@@ -19,9 +19,9 @@ export default function Home() {
             </h1>
 
             <p className="mx-auto mt-6 max-w-xl text-base leading-relaxed text-zinc-400 sm:text-lg">
-              A studio building fast, focused Telegram bots for on-chain traders.
-              Real-time wallet tracking, portfolio insights, and instant alerts —
-              inside the chat app you already use.
+              A studio building fast, focused Telegram bots for on-chain
+              traders. Real-time wallet tracking, portfolio insights, and
+              instant alerts — inside the chat app you already use.
             </p>
 
             <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -43,18 +43,19 @@ export default function Home() {
                 </svg>
               </Link>
               <a
-                href="https://t.me/SolWalletWatcherBot"
+                href="https://t.me/De1trackBot"
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-border bg-panel px-5 text-sm font-medium text-white transition-colors hover:border-white/20 hover:bg-panel-2"
               >
                 <TelegramIcon className="h-4 w-4" />
-                Try Sol Wallet Watcher
+                Try DegenTrack
               </a>
             </div>
 
             <p className="mt-6 text-xs text-muted">
-              No signup. No custody. Nothing to install. Open a Telegram chat, hit start.
+              No signup. No custody. Nothing to install. Open a Telegram chat,
+              hit start.
             </p>
           </div>
 
@@ -68,7 +69,7 @@ export default function Home() {
                     <span className="h-2.5 w-2.5 rounded-full bg-yellow-500/70" />
                     <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/70" />
                   </div>
-                  <span className="ml-3 text-xs text-muted">@SolWalletWatcherBot</span>
+                  <span className="ml-3 text-xs text-muted">@De1trackBot</span>
                 </div>
                 <div className="mt-4 space-y-3 font-mono text-[12px] leading-relaxed">
                   <ChatLine role="you">/watch 7xKX...aB2v</ChatLine>
@@ -218,18 +219,18 @@ export default function Home() {
             Ready to watch a wallet?
           </h2>
           <p className="mx-auto mt-4 max-w-lg text-base text-zinc-400">
-            Open Sol Wallet Watcher in Telegram, paste an address, and start
-            catching every trade the moment it lands on-chain.
+            Open DegenTrack in Telegram, paste an address, and start catching
+            every trade the moment it lands on-chain.
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <a
-              href="https://t.me/SolWalletWatcherBot"
+              href="https://t.me/De1trackBot"
               target="_blank"
               rel="noreferrer"
               className="inline-flex h-11 items-center gap-2 rounded-full bg-white px-6 text-sm font-semibold text-black hover:bg-zinc-200"
             >
               <TelegramIcon className="h-4 w-4" />
-              Launch Sol Wallet Watcher
+              Launch DegenTrack
             </a>
             <Link
               href="/bots"
@@ -331,7 +332,9 @@ function ComingSoonCard({
         <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
         In the oven
       </span>
-      <h3 className="relative mt-6 text-lg font-semibold text-white">{title}</h3>
+      <h3 className="relative mt-6 text-lg font-semibold text-white">
+        {title}
+      </h3>
       <p className="relative mt-2 text-sm leading-relaxed text-zinc-400">
         {description}
       </p>

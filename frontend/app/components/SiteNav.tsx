@@ -42,7 +42,7 @@ export function SiteNav() {
             View bots
           </Link>
           <a
-            href="https://t.me/SolWalletWatcherBot"
+            href="https://t.me/De1trackBot"
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-xs font-semibold text-black transition-colors hover:bg-zinc-200"
@@ -66,7 +66,13 @@ export function SiteNav() {
   );
 }
 
-function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
+function NavLink({
+  href,
+  children,
+}: {
+  href: string;
+  children: React.ReactNode;
+}) {
   return (
     <Link
       href={href}

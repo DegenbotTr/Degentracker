@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { bots, getBot } from "@/lib/bots";
+import { GroupCommandsTable } from "@/app/components/GroupCommands";
 
 export function generateStaticParams() {
   return bots.map((bot) => ({ slug: bot.slug }));
@@ -168,20 +169,26 @@ export default async function BotDetailPage(props: PageProps<"/bots/[slug]">) {
                 />
                 <HowStep
                   step="3"
-                  title="Paste a Solana address"
-                  body="Use /watch to subscribe. The bot validates the address, opens a WebSocket, and shares the subscription across all users watching the same wallet."
+                  title="Watch a wallet"
+                  body="Use /watch to subscribe to any Solana wallet. The bot validates the address, opens a WebSocket, and shares the subscription across all users watching the same wallet."
                 />
                 <HowStep
                   step="4"
                   title="Tune your filters"
-                  body="Set /minsize in USD to silence dust trades, and /label wallets so alerts read like real names instead of hex."
+                  body="Set /minsize in USD to filter out small trades, use /label to name wallets, and /tag to organize them. Pause notifications per wallet or adjust individual wallet alert thresholds."
                 />
               </ol>
             </div>
 
             {/* Commands */}
             <div className="mt-14">
-              <SectionHeading eyebrow="Reference" title="Every command" />
+              <SectionHeading
+                eyebrow="Reference"
+                title="Private chat commands"
+              />
+              <p className="mt-2 text-sm text-zinc-400">
+                Use these commands when chatting with the bot directly (DM).
+              </p>
               <div className="mt-6 overflow-hidden rounded-2xl border border-border bg-panel">
                 <table className="w-full text-left text-sm">
                   <thead className="border-b border-border bg-panel-2 text-[11px] uppercase tracking-widest text-muted">
@@ -212,6 +219,45 @@ export default async function BotDetailPage(props: PageProps<"/bots/[slug]">) {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+
+            {/* Group Commands */}
+            <div className="mt-14">
+              <SectionHeading eyebrow="Groups" title="Group chat commands" />
+              <p className="mt-2 text-sm text-zinc-400">
+                When the bot is added to a Telegram group, these commands become
+                available. Group tracking helps teams share alpha and track
+                callers.
+              </p>
+              <GroupCommandsTable />
+              <div className="mt-4 rounded-xl border border-purple-500/20 bg-purple-500/5 p-4">
+                <div className="flex gap-3">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-purple-500/20 text-purple-300">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-3 w-3"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+                    </svg>
+                  </span>
+                  <div>
+                    <div className="text-sm font-semibold text-purple-200">
+                      Group alpha tracking
+                    </div>
+                    <div className="mt-1 text-sm leading-relaxed text-purple-300/80">
+                      Paste any Solana token CA in a group and the bot records
+                      who called it first, tracks peak gains, and builds a
+                      leaderboard. Perfect for coordinating with your trading
+                      team.
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

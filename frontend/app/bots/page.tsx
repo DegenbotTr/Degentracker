@@ -74,7 +74,7 @@ export default function BotsPage() {
           </p>
           <div className="mt-6">
             <a
-              href="https://t.me/SolWalletWatcherBot"
+              href="https://t.me/De1trackBot"
               target="_blank"
               rel="noreferrer"
               className="inline-flex h-10 items-center gap-2 rounded-full border border-border bg-panel px-5 text-xs font-medium text-white hover:border-white/20 hover:bg-panel-2"
@@ -128,7 +128,9 @@ function PlaceholderCard({
         <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
         {status}
       </span>
-      <h3 className="relative mt-6 text-lg font-semibold text-white">{title}</h3>
+      <h3 className="relative mt-6 text-lg font-semibold text-white">
+        {title}
+      </h3>
       <p className="relative mt-2 text-sm leading-relaxed text-zinc-400">
         {body}
       </p>

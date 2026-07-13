@@ -24,8 +24,8 @@ export function SiteFooter() {
               <span className="text-sm font-semibold text-white">DegenHub</span>
             </div>
             <p className="mt-4 max-w-sm text-sm leading-relaxed text-muted">
-              Home for traders bots. Fast, focused Telegram tools for the
-              Solana ecosystem — real-time on-chain intel where you already are.
+              Home for traders bots. Fast, focused Telegram tools for the Solana
+              ecosystem — real-time on-chain intel where you already are.
             </p>
           </div>
 
@@ -44,7 +44,7 @@ export function SiteFooter() {
                   href="/bots/sol-wallet-watcher"
                   className="text-zinc-300 hover:text-white"
                 >
-                  Sol Wallet Watcher
+                  DegenTrack
                 </Link>
               </li>
               <li>
@@ -62,7 +62,7 @@ export function SiteFooter() {
             <ul className="mt-4 space-y-2 text-sm">
               <li>
                 <a
-                  href="https://t.me/SolWalletWatcherBot"
+                  href="https://t.me/De1trackBot"
                   target="_blank"
                   rel="noreferrer"
                   className="text-zinc-300 hover:text-white"
@@ -95,9 +95,7 @@ export function SiteFooter() {
         </div>
 
         <div className="mt-12 flex flex-col items-start justify-between gap-4 border-t border-border/60 pt-6 text-xs text-muted md:flex-row md:items-center">
-          <p>
-            © {new Date().getFullYear()} DegenHub. Home for traders bots.
-          </p>
+          <p>© {new Date().getFullYear()} DegenHub. Home for traders bots.</p>
           <p className="flex items-center gap-2">
             <span className="pulse-dot h-1.5 w-1.5 rounded-full bg-accent" />
             All bots operational
