@@ -45,15 +45,20 @@ model WatchedWallet {
 }
 
 model GroupTokenCall {
-  id        String   @id @default(cuid())
-  groupId   BigInt
-  mint      String
-  symbol    String   @default("")
-  name      String   @default("")
-  calledAt  DateTime @default(now())
+  id             String   @id @default(cuid())
+  groupId        BigInt
+  mint           String
+  symbol         String   @default("")
+  name           String   @default("")
+  calledAt       DateTime @default(now())
+  callerId       BigInt   @default(0) // Telegram user id who posted the CA (0 = unknown / pre-migration)
+  callerUsername String   @default("")
+  priceAtCall    Float    @default(0) // token price at call time (USD)
+  mcAtCall       Float    @default(0) // market cap at call time (USD)
 
   @@index([groupId, calledAt])
   @@index([groupId, mint])
+  @@index([groupId, callerId])
 }
 
 model Trade {

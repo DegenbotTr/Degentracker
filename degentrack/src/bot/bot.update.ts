@@ -198,10 +198,15 @@ export class BotUpdate {
     if (isGroup(ctx)) {
       await ctx.reply(
         `👁 <b>Sol Wallet Watcher</b> is now active in this group!\n\n` +
-          `Use <code>/watch &lt;address&gt;</code> to track a Solana wallet.\n` +
-          `Use <code>/unwatch &lt;address&gt;</code> to stop tracking.\n` +
-          `Use <code>/list</code> to see all watched wallets.\n\n` +
-          `⚠️ Solana wallets only.`,
+          `<b>Wallet tracking</b>\n` +
+          `• <code>/watch &lt;address&gt;</code> — track a Solana wallet\n` +
+          `• <code>/unwatch &lt;address&gt;</code> — stop tracking\n` +
+          `• <code>/list</code> — see all watched wallets\n\n` +
+          `<b>Group alpha</b>\n` +
+          `• Paste any CA — I'll show token info and record who called it first\n` +
+          `• <code>/trending</code> — most-called tokens in this group\n` +
+          `• <code>/leaderboard</code> — top callers by call performance\n\n` +
+          `⚠️ Solana only.`,
         { parse_mode: 'HTML' },
       );
       return;
@@ -231,9 +236,15 @@ export class BotUpdate {
   async onHelp(@Ctx() ctx: Context): Promise<void> {
     await ctx.reply(
       `📖 <b>Commands</b>\n━━━━━━━━━━━━━━━━━━━━\n` +
-        `/watch /unwatch /list /label\n` +
-        `/portfolio /txhistory /price\n` +
-        `/minsize /stats /menu`,
+        `<b>Wallets</b>\n` +
+        `/watch /unwatch /list /label /tag /untag\n\n` +
+        `<b>Insights</b>\n` +
+        `/portfolio /txhistory /pnl /backfill /price\n\n` +
+        `<b>Groups</b>\n` +
+        `/trending /leaderboard\n\n` +
+        `<b>Settings</b>\n` +
+        `/minsize /stats /menu\n\n` +
+        `💡 Paste any Solana token CA to get a full info card.`,
       { parse_mode: 'HTML' },
     );
   }
@@ -335,6 +346,78 @@ export class BotUpdate {
     }
     const { text, keyboard } = await this.buildWalletListContent(ctx.chat.id);
     await ctx.reply(text, { parse_mode: 'HTML', reply_markup: keyboard });
+  }
+
+  @Command('leaderboard')
+  async onLeaderboard(@Ctx() ctx: Context): Promise<void> {
+    if (!isGroup(ctx)) {
+      await ctx.reply(
+        `📊 <b>Leaderboard</b> is only available in groups.\n\nAdd me to a group where CAs get called and try again there.`,
+        { parse_mode: 'HTML' },
+      );
+      return;
+    }
+    const loading = await ctx.reply('⏳ Scoring callers...');
+    try {
+      const board = await this.solanaService.getGroupLeaderboard(ctx.chat.id);
+      if (board.length === 0) {
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          (loading as any).message_id,
+          undefined,
+          `📊 <b>Leaderboard</b>\n\nNo scored calls yet. Paste a token CA in this group and I'll start tracking who called what.`,
+          { parse_mode: 'HTML' },
+        );
+        return;
+      }
+
+      const top = board.slice(0, 10);
+      const groupName = (ctx.chat as any)?.title ?? 'this group';
+
+      const rows = top.map((c, i) => {
+        const rank =
+          i === 0
+            ? '🥇'
+            : i === 1
+              ? '🥈'
+              : i === 2
+                ? '🥉'
+                : ` ${i + 1}.`;
+        const handle = c.username ? `@${c.username}` : `user ${c.callerId}`;
+        const avgEmoji = c.avgGainPct >= 0 ? '🟢' : '🔴';
+        const avgSign = c.avgGainPct >= 0 ? '+' : '';
+        const bestSign = c.bestGainPct >= 0 ? '+' : '';
+        const winPct = (c.winRate * 100).toFixed(0);
+        return (
+          `${rank} <b>${handle}</b>\n` +
+          `   📞 ${c.calls} call${c.calls !== 1 ? 's' : ''}  ·  ` +
+          `${avgEmoji} avg <b>${avgSign}${c.avgGainPct.toFixed(1)}%</b>  ·  ` +
+          `🏆 best <b>${bestSign}${c.bestGainPct.toFixed(1)}%</b>  ·  ` +
+          `🎯 2x rate <b>${winPct}%</b>`
+        );
+      });
+
+      const text =
+        `📊 <b>Caller Leaderboard</b>\n└ ${groupName}\n\n` +
+        rows.join('\n\n') +
+        `\n\n<i>Ranked by average % gain since first call. Only first-callers of a token get credit.</i>`;
+
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        (loading as any).message_id,
+        undefined,
+        text,
+        { parse_mode: 'HTML', disable_web_page_preview: true } as any,
+      );
+    } catch (err) {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        (loading as any).message_id,
+        undefined,
+        `❌ Could not build leaderboard. Please try again.`,
+        { parse_mode: 'HTML' },
+      );
+    }
   }
 
   @Command('trending')
@@ -606,7 +689,15 @@ export class BotUpdate {
     await ctx.answerCbQuery();
     await ctx.reply(
       `📖 <b>Commands</b>\n━━━━━━━━━━━━━━━━━━━━\n` +
-        `/watch /unwatch /list /label\n/portfolio /txhistory /price\n/minsize /stats /menu`,
+        `<b>Wallets</b>\n` +
+        `/watch /unwatch /list /label /tag /untag\n\n` +
+        `<b>Insights</b>\n` +
+        `/portfolio /txhistory /pnl /backfill /price\n\n` +
+        `<b>Groups</b>\n` +
+        `/trending /leaderboard\n\n` +
+        `<b>Settings</b>\n` +
+        `/minsize /stats /menu\n\n` +
+        `💡 Paste any Solana token CA to get a full info card.`,
       { parse_mode: 'HTML' },
     );
   }
@@ -1087,40 +1178,57 @@ export class BotUpdate {
     const replyToId = (ctx.message as any)?.message_id;
     const loading = await ctx.reply('🔍 Fetching token info...');
     try {
-      const { text, imageUrl, symbol, name } =
+      const { text, imageUrl, symbol, name, price, marketCap } =
         await this.solanaService.getTokenInfo(mint);
       const keyboard = {
-        inline_keyboard: [
-          [
-            { text: 'Chart', url: `https://dexscreener.com/solana/${mint}` },
-            {
-              text: 'Birdeye',
-              url: `https://birdeye.so/token/${mint}?chain=solana`,
-            },
-            { text: 'Solscan', url: `https://solscan.io/token/${mint}` },
-          ],
-        ],
+        inline_keyboard: this.solanaService.buildTradeButtons(mint),
       };
       await ctx.telegram
         .deleteMessage(ctx.chat.id, (loading as any).message_id)
         .catch(() => {});
 
-      // Record call in groups for trending
+      // Look up the first caller BEFORE we record the current call, so if this
+      // user was the first, they don't see themselves as the "first caller".
+      let firstCallerNote = '';
       if (isGroup(ctx)) {
+        const first = await this.solanaService
+          .getFirstCaller(ctx.chat.id, mint)
+          .catch(() => null);
+        if (first && first.mcAtCall > 0) {
+          const gainPct =
+            ((marketCap - first.mcAtCall) / first.mcAtCall) * 100;
+          const gainEmoji = gainPct >= 0 ? '🟢' : '🔴';
+          const gainSign = gainPct >= 0 ? '+' : '';
+          const handle = first.callerUsername
+            ? `@${first.callerUsername}`
+            : `user ${first.callerId}`;
+          const timeAgo = this.humanTimeAgo(first.calledAt);
+          firstCallerNote =
+            `🎯 <b>First called by ${handle}</b>\n` +
+            `└ MC then: <b>${this.fmtCompactUsd(first.mcAtCall)}</b>  ·  ${gainEmoji} <b>${gainSign}${gainPct.toFixed(1)}%</b> since  ·  <i>${timeAgo}</i>\n\n`;
+        }
+
         this.solanaService
-          .recordGroupTokenCall(ctx.chat.id, mint, symbol, name)
+          .recordGroupTokenCall(ctx.chat.id, mint, symbol, name, {
+            id: ctx.from?.id ?? 0,
+            username: (ctx.from as any)?.username ?? '',
+            priceAtCall: price,
+            mcAtCall: marketCap,
+          })
           .catch(() => {});
       }
 
+      const finalText = firstCallerNote + text;
+
       if (imageUrl) {
         await ctx.replyWithPhoto(imageUrl, {
-          caption: text,
+          caption: finalText,
           parse_mode: 'HTML',
           reply_markup: keyboard,
           reply_parameters: { message_id: replyToId },
         } as any);
       } else {
-        await ctx.reply(text, {
+        await ctx.reply(finalText, {
           parse_mode: 'HTML',
           reply_markup: keyboard,
           reply_parameters: { message_id: replyToId },
@@ -1135,5 +1243,20 @@ export class BotUpdate {
         { parse_mode: 'HTML' },
       );
     }
+  }
+
+  private fmtCompactUsd(n: number): string {
+    if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(2)}B`;
+    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
+    if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
+    return `$${n.toFixed(2)}`;
+  }
+
+  private humanTimeAgo(date: Date): string {
+    const s = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (s < 60) return `${s}s ago`;
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+    return `${Math.floor(s / 86400)}d ago`;
   }
 }

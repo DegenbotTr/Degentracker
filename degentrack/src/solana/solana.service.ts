@@ -26,6 +26,14 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     { subId: number; chatIds: Set<number> }
   >();
 
+  // Cached SOL price to avoid slamming CoinGecko under alert bursts.
+  private solPriceCache: {
+    price: number;
+    change24h: number;
+    fetchedAt: number;
+  } | null = null;
+  private static readonly SOL_PRICE_TTL_MS = 30_000;
+
   constructor(
     private config: ConfigService,
     private prisma: PrismaService,
@@ -378,6 +386,117 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  // ─── Cached SOL Price ────────────────────────────────────────────────────────
+
+  /**
+   * Returns SOL USD price (and 24h change if available), cached in-memory for
+   * ~30s. CoinGecko free tier rate-limits aggressively, and handleTransaction
+   * fires on every trade — without this cache we get 429s under any real load.
+   */
+  async getSolPrice(): Promise<{ price: number; change24h: number }> {
+    const now = Date.now();
+    if (
+      this.solPriceCache &&
+      now - this.solPriceCache.fetchedAt < SolanaService.SOL_PRICE_TTL_MS
+    ) {
+      return {
+        price: this.solPriceCache.price,
+        change24h: this.solPriceCache.change24h,
+      };
+    }
+    try {
+      const p = await (
+        await fetch(
+          'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd&include_24hr_change=true',
+        )
+      ).json();
+      const price = p?.solana?.usd ?? 0;
+      const change24h = p?.solana?.usd_24h_change ?? 0;
+      if (price > 0) {
+        this.solPriceCache = { price, change24h, fetchedAt: now };
+      }
+      return { price, change24h };
+    } catch {
+      // Return stale cache on error rather than 0 — it's better than nothing.
+      if (this.solPriceCache)
+        return {
+          price: this.solPriceCache.price,
+          change24h: this.solPriceCache.change24h,
+        };
+      return { price: 0, change24h: 0 };
+    }
+  }
+
+  // ─── Trade Deep-Link Buttons ─────────────────────────────────────────────────
+
+  /**
+   * Builds inline keyboard rows with one-tap "trade this" deep-links to the
+   * biggest Solana trading platforms plus chart / on-chain research links.
+   * Referral codes are pulled from env vars (TROJAN_REF / BULLX_REF / PHOTON_REF)
+   * when present, otherwise plain links are used.
+   */
+  buildTradeButtons(
+    mint: string | null,
+    signature?: string,
+    walletAddress?: string,
+  ): { text: string; url: string }[][] {
+    if (!mint) {
+      const contextOnly: { text: string; url: string }[] = [];
+      if (signature)
+        contextOnly.push({
+          text: '🔗 TX',
+          url: `https://solscan.io/tx/${signature}`,
+        });
+      if (walletAddress)
+        contextOnly.push({
+          text: '👛 Wallet',
+          url: `https://solscan.io/account/${walletAddress}`,
+        });
+      return contextOnly.length ? [contextOnly] : [];
+    }
+
+    const trojanRef = this.config.get<string>('TROJAN_REF', '');
+    const bullxRef = this.config.get<string>('BULLX_REF', '');
+    const photonRef = this.config.get<string>('PHOTON_REF', '');
+
+    const trojanUrl = trojanRef
+      ? `https://t.me/solana_trojanbot?start=r-${trojanRef}-${mint}`
+      : `https://t.me/solana_trojanbot?start=${mint}`;
+
+    const bullxUrl = bullxRef
+      ? `https://neo.bullx.io/terminal?chainId=1399811149&address=${mint}&referralCode=${bullxRef}`
+      : `https://neo.bullx.io/terminal?chainId=1399811149&address=${mint}`;
+
+    // Photon's referral scheme: /@<ref>/<mint>. Without a ref, use the plain
+    // token page which accepts a mint or pair address.
+    const photonUrl = photonRef
+      ? `https://photon-sol.tinyastro.io/@${photonRef}/${mint}`
+      : `https://photon-sol.tinyastro.io/en/lp/${mint}`;
+
+    const tradeRow = [
+      { text: '⚡ Trojan', url: trojanUrl },
+      { text: '🐂 BullX', url: bullxUrl },
+      { text: '⚛️ Photon', url: photonUrl },
+    ];
+
+    const researchRow: { text: string; url: string }[] = [
+      { text: '📊 Chart', url: `https://dexscreener.com/solana/${mint}` },
+      { text: '🧬 GMGN', url: `https://gmgn.ai/sol/token/${mint}` },
+    ];
+    if (signature)
+      researchRow.push({
+        text: '🔗 TX',
+        url: `https://solscan.io/tx/${signature}`,
+      });
+    if (walletAddress)
+      researchRow.push({
+        text: '👛 Wallet',
+        url: `https://solscan.io/account/${walletAddress}`,
+      });
+
+    return [tradeRow, researchRow];
+  }
+
   // ─── Min Trade Filter ────────────────────────────────────────────────────────
 
   async setMinTradeSize(chatId: number, usd: number): Promise<void> {
@@ -513,19 +632,8 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     const items: any[] = dasData?.result?.items || [];
     const nativeBalance = dasData?.result?.nativeBalance;
 
-    let solPrice = 0,
-      solChange24h = 0;
-    try {
-      const p = await (
-        await fetch(
-          'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd&include_24hr_change=true',
-        )
-      ).json();
-      solPrice = p?.solana?.usd ?? 0;
-      solChange24h = p?.solana?.usd_24h_change ?? 0;
-    } catch {
-      this.logger.warn('Could not fetch SOL price');
-    }
+    const { price: solPrice, change24h: solChange24h } =
+      await this.getSolPrice();
 
     const solBalance = (nativeBalance?.lamports ?? 0) / 1e9;
     const solUsd = solBalance * solPrice;
@@ -614,18 +722,8 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
 
     if (!sigsRes.length) return '📭 No recent transactions found.';
 
-    // Fetch SOL price once for USD conversion
-    let solPrice = 0;
-    try {
-      const p = await (
-        await fetch(
-          'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd',
-        )
-      ).json();
-      solPrice = p?.solana?.usd ?? 0;
-    } catch {
-      /* best effort */
-    }
+    // Fetch SOL price once for USD conversion (30s cache)
+    const solPrice = (await this.getSolPrice()).price;
 
     // Fetch full tx details for all signatures in parallel
     const txs = await Promise.all(
@@ -750,10 +848,180 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     mint: string,
     symbol: string,
     name: string,
+    caller?: {
+      id: number;
+      username: string;
+      priceAtCall: number;
+      mcAtCall: number;
+    },
   ): Promise<void> {
     await this.prisma.groupTokenCall.create({
-      data: { groupId, mint, symbol, name },
+      data: {
+        groupId,
+        mint,
+        symbol,
+        name,
+        callerId: caller?.id ?? 0,
+        callerUsername: caller?.username ?? '',
+        priceAtCall: caller?.priceAtCall ?? 0,
+        mcAtCall: caller?.mcAtCall ?? 0,
+      },
     });
+  }
+
+  /**
+   * Returns the first user who ever called this mint in this group, if any.
+   * Skips synthetic pre-migration rows (callerId = 0).
+   */
+  async getFirstCaller(
+    groupId: number,
+    mint: string,
+  ): Promise<{
+    callerId: number;
+    callerUsername: string;
+    priceAtCall: number;
+    mcAtCall: number;
+    calledAt: Date;
+  } | null> {
+    const first = await this.prisma.groupTokenCall.findFirst({
+      where: { groupId, mint, callerId: { not: BigInt(0) } },
+      orderBy: { calledAt: 'asc' },
+      select: {
+        callerId: true,
+        callerUsername: true,
+        priceAtCall: true,
+        mcAtCall: true,
+        calledAt: true,
+      },
+    });
+    if (!first) return null;
+    return {
+      callerId: Number(first.callerId),
+      callerUsername: first.callerUsername,
+      priceAtCall: first.priceAtCall,
+      mcAtCall: first.mcAtCall,
+      calledAt: first.calledAt,
+    };
+  }
+
+  /**
+   * Batched current market cap lookup via DexScreener. Returns a map of
+   * mint → marketCap USD. Silently drops mints with no active pair.
+   * DexScreener caps at 30 addresses per request; we chunk larger lists.
+   */
+  async getCurrentMarketCaps(mints: string[]): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    if (mints.length === 0) return out;
+    const unique = Array.from(new Set(mints));
+    const CHUNK = 30;
+    for (let i = 0; i < unique.length; i += CHUNK) {
+      const slice = unique.slice(i, i + CHUNK);
+      try {
+        const r = await fetch(
+          `https://api.dexscreener.com/tokens/v1/solana/${slice.join(',')}`,
+        );
+        const pairs: any[] = await r.json();
+        for (const pair of pairs || []) {
+          const addr = pair?.baseToken?.address;
+          const fdv = pair?.fdv ?? 0;
+          if (!addr) continue;
+          // Keep the largest FDV across pools for the same mint.
+          const prev = out.get(addr) ?? 0;
+          if (fdv > prev) out.set(addr, fdv);
+        }
+      } catch {
+        /* best effort */
+      }
+    }
+    return out;
+  }
+
+  async getGroupLeaderboard(groupId: number): Promise<
+    {
+      callerId: number;
+      username: string;
+      calls: number;
+      avgGainPct: number;
+      bestGainPct: number;
+      winRate: number; // fraction of calls with >=100% gain (2x+)
+    }[]
+  > {
+    // Fetch all calls with a real caller in this group.
+    const rows = await this.prisma.groupTokenCall.findMany({
+      where: { groupId, callerId: { not: BigInt(0) } },
+      orderBy: { calledAt: 'asc' },
+      select: {
+        callerId: true,
+        callerUsername: true,
+        mint: true,
+        mcAtCall: true,
+      },
+    });
+    if (rows.length === 0) return [];
+
+    // Deduplicate to first-caller per mint (discovery calls).
+    const firstPerMint = new Map<
+      string,
+      { callerId: bigint; username: string; mcAtCall: number }
+    >();
+    for (const r of rows) {
+      if (r.mcAtCall <= 0) continue;
+      if (firstPerMint.has(r.mint)) continue;
+      firstPerMint.set(r.mint, {
+        callerId: r.callerId,
+        username: r.callerUsername,
+        mcAtCall: r.mcAtCall,
+      });
+    }
+    if (firstPerMint.size === 0) return [];
+
+    // Fetch current MCs for all discovered mints.
+    const mints = Array.from(firstPerMint.keys());
+    const currentMcs = await this.getCurrentMarketCaps(mints);
+
+    // Aggregate per caller.
+    const perCaller = new Map<
+      string,
+      {
+        callerId: number;
+        username: string;
+        gains: number[];
+      }
+    >();
+    for (const [mint, first] of firstPerMint) {
+      const currentMc = currentMcs.get(mint);
+      if (currentMc === undefined) continue; // no live pair — skip
+      const gainPct = ((currentMc - first.mcAtCall) / first.mcAtCall) * 100;
+      const key = String(first.callerId);
+      const entry = perCaller.get(key) ?? {
+        callerId: Number(first.callerId),
+        username: first.username,
+        gains: [],
+      };
+      entry.gains.push(gainPct);
+      // Prefer the most recent non-empty username.
+      if (first.username && !entry.username) entry.username = first.username;
+      perCaller.set(key, entry);
+    }
+
+    const results = Array.from(perCaller.values())
+      .map((c) => {
+        const calls = c.gains.length;
+        const avgGainPct = c.gains.reduce((s, g) => s + g, 0) / calls;
+        const bestGainPct = Math.max(...c.gains);
+        const wins = c.gains.filter((g) => g >= 100).length;
+        return {
+          callerId: c.callerId,
+          username: c.username,
+          calls,
+          avgGainPct,
+          bestGainPct,
+          winRate: wins / calls,
+        };
+      })
+      .sort((a, b) => b.avgGainPct - a.avgGainPct);
+
+    return results;
   }
 
   async getTrendingTokens(
@@ -824,6 +1092,8 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     imageUrl: string | null;
     symbol: string;
     name: string;
+    price: number;
+    marketCap: number;
   }> {
     // Fetch from DexScreener, Helius, and RugCheck in parallel
     const [dsRes, heliusRes, rugRes] = await Promise.allSettled([
@@ -861,6 +1131,8 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
         imageUrl: null,
         symbol: '',
         name: '',
+        price: 0,
+        marketCap: 0,
       };
     }
 
@@ -988,7 +1260,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       socialsLine +
       securityLine;
 
-    return { text, imageUrl, symbol, name };
+    return { text, imageUrl, symbol, name, price, marketCap: mc };
   }
 
   // ─── Price Check ─────────────────────────────────────────────────────────────
@@ -1096,17 +1368,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Fetch current SOL price to calculate USD value of the trade
-      let solPrice = 0;
-      try {
-        const p = await (
-          await fetch(
-            'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd',
-          )
-        ).json();
-        solPrice = p?.solana?.usd ?? 0;
-      } catch {
-        /* best effort */
-      }
+      const solPrice = (await this.getSolPrice()).price;
 
       action.usdValue = action.solAmount * solPrice;
 
@@ -1190,11 +1452,66 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       const entry = this.watchedWallets.get(walletAddress);
       if (!entry) return;
 
+      // ── First-buy detection (per-wallet, computed before we persist this tx)
+      // For BUYs: has this wallet ever bought this mint before?
+      let isFirstBuy = false;
+      if (action.type === 'BUY' && action.inMint) {
+        const priorBuy = await this.prisma.trade.findFirst({
+          where: {
+            walletAddress,
+            tokenMint: action.inMint,
+            type: 'BUY',
+          },
+          select: { id: true },
+        });
+        isFirstBuy = !priorBuy;
+      }
+
       // Fetch all users watching this wallet from DB
       const watchers = await this.prisma.watchedWallet.findMany({
         where: { walletAddress },
         include: { user: true },
       });
+
+      // ── Cluster detection: for each recipient, count how many of THEIR
+      // watched wallets have bought this mint in the last 30 min. Only bother
+      // computing when this is a BUY of a token mint.
+      const CLUSTER_WINDOW_MIN = 30;
+      const clusterSince = new Date(
+        Date.now() - CLUSTER_WINDOW_MIN * 60 * 1000,
+      );
+      const perUserCluster = new Map<
+        number,
+        { count: number; windowMinutes: number }
+      >();
+      if (action.type === 'BUY' && action.inMint) {
+        for (const w of watchers) {
+          const chatId = Number(w.userId);
+          const userWatched = await this.prisma.watchedWallet.findMany({
+            where: { userId: w.userId },
+            select: { walletAddress: true },
+          });
+          const addrs = userWatched.map((u) => u.walletAddress);
+          if (addrs.length < 2) continue;
+          const priorBuys = await this.prisma.trade.groupBy({
+            by: ['walletAddress'],
+            where: {
+              walletAddress: { in: addrs, not: walletAddress },
+              tokenMint: action.inMint,
+              type: 'BUY',
+              timestamp: { gte: clusterSince },
+            },
+          });
+          const uniqueOther = priorBuys.length;
+          if (uniqueOther >= 1) {
+            // current trade counts too — that's why total = uniqueOther + 1
+            perUserCluster.set(chatId, {
+              count: uniqueOther + 1,
+              windowMinutes: CLUSTER_WINDOW_MIN,
+            });
+          }
+        }
+      }
 
       for (const watcher of watchers) {
         const chatId = Number(watcher.userId);
@@ -1216,44 +1533,60 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
             txFeeUsd,
             txTime,
             priceImpact,
+            isFirstBuy,
+            cluster: perUserCluster.get(chatId),
           },
         );
 
-        const primaryMintForButtons = action.inMint ?? action.outMint;
         this.bot.telegram
           .sendMessage(chatId, message, {
             parse_mode: 'HTML',
             // @ts-ignore
             disable_web_page_preview: true,
             reply_markup: {
-              inline_keyboard: [
-                [
-                  ...(primaryMintForButtons
-                    ? [
-                        {
-                          text: 'Chart',
-                          url: `https://dexscreener.com/solana/${primaryMintForButtons}`,
-                        },
-                        {
-                          text: 'Birdeye',
-                          url: `https://birdeye.so/token/${primaryMintForButtons}?chain=solana`,
-                        },
-                      ]
-                    : []),
-                  {
-                    text: 'TX',
-                    url: `https://solscan.io/tx/${signature}`,
-                  },
-                  {
-                    text: 'Wallet',
-                    url: `https://solscan.io/account/${walletAddress}`,
-                  },
-                ],
-              ],
+              inline_keyboard: this.buildTradeButtons(
+                primaryMint,
+                signature,
+                walletAddress,
+              ),
             },
           })
           .catch((err) => {
             this.logger.error(`Failed to send to ${chatId}: ${err.message}`);
+          });
+      }
+
+      // Persist the trade — needed for first-buy + cluster + PnL analytics.
+      // TRANSFERs return earlier in this method so action.type here is always
+      // BUY / SELL / SWAP. Skip if we have no primary mint (unlikely).
+      if (primaryMint) {
+        const tokenAmount =
+          action.type === 'BUY' ? action.inAmount : action.outAmount;
+        this.prisma.trade
+          .upsert({
+            where: { signature },
+            create: {
+              walletAddress,
+              type: action.type,
+              tokenMint: primaryMint,
+              tokenSymbol: action.tokenSymbol || '',
+              tokenName: action.tokenName || '',
+              tokenAmount,
+              priceUsd: marketPrice,
+              totalUsd: action.usdValue,
+              marketCapUsd: marketCap,
+              solAmount: action.solAmount,
+              signature,
+              timestamp: tx.blockTime
+                ? new Date(tx.blockTime * 1000)
+                : new Date(),
+            },
+            update: {},
+          })
+          .catch((err) => {
+            this.logger.error(
+              `Failed to persist trade ${signature}: ${err.message}`,
+            );
           });
       }
     } catch (err) {
@@ -1455,7 +1788,13 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     } else {
       return null;
     }
-    const type = 'SWAP';
+
+    // Classify: SOL out + tokens in = BUY; SOL in + tokens out = SELL; else SWAP.
+    let type: 'BUY' | 'SELL' | 'SWAP';
+    if (solOut && tokensIn.length > 0 && tokensOut.length === 0) type = 'BUY';
+    else if (solIn && tokensOut.length > 0 && tokensIn.length === 0)
+      type = 'SELL';
+    else type = 'SWAP';
 
     const shortMint = (m: string) => `${m.slice(0, 6)}...${m.slice(-4)}`;
 
@@ -1548,22 +1887,12 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       txFeeUsd: number;
       txTime: string | null;
       priceImpact: number | null;
+      isFirstBuy?: boolean;
+      cluster?: { count: number; windowMinutes: number };
     },
   ): string {
     const labelLine = label ? `🏷 <b>${label}</b>\n` : '';
     const walletShort = `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
-
-    // Determine the non-SOL token (could be in or out)
-    const tokenMint = action.inMint ?? action.outMint;
-    const tokenName =
-      (action.inMint
-        ? action.inName || action.inSymbol
-        : action.outName || action.outSymbol) || '???';
-    const tokenAmount = action.inMint ? action.inAmount : action.outAmount;
-
-    // Swap direction with CA embedded as copyable code in token name
-    const fromLabel = action.outMint ? `<code>${action.outMint}</code>` : 'SOL';
-    const toLabel = action.inMint ? `<code>${action.inMint}</code>` : 'SOL';
 
     const fromName = action.outMint
       ? action.outName || action.outSymbol || 'Token'
@@ -1577,7 +1906,6 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
         ? `💵 Value: <b>~$${action.usdValue.toFixed(2)}</b>\n`
         : '';
 
-    // Both contract addresses
     const fromAmountFmt = action.outAmount.toLocaleString(undefined, {
       maximumFractionDigits: 2,
     });
@@ -1585,7 +1913,6 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       maximumFractionDigits: 2,
     });
 
-    // Shortened display (10 chars) but full address is inside <code> for copying
     const fromCaLine = action.outMint
       ? `🔴 <b>From CA:</b> <code>${action.outMint}</code>\n`
       : '';
@@ -1603,9 +1930,24 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
             : `MC $${(mc / 1_000).toFixed(2)}K`
         : '';
 
+    // Header badge — BUY / SELL / SWAP
+    const headerBadge =
+      action.type === 'BUY'
+        ? '🟢 <b>BUY</b>'
+        : action.type === 'SELL'
+          ? '🔴 <b>SELL</b>'
+          : '🔄 <b>SWAP</b>';
+
+    const firstBuyLine = extra?.isFirstBuy ? `🆕 <b>FIRST BUY</b>\n` : '';
+    const clusterLine = extra?.cluster
+      ? `🐋 <b>Cluster:</b> ${extra.cluster.count} of your watched wallets bought this in ${extra.cluster.windowMinutes}m\n`
+      : '';
+
     return (
+      firstBuyLine +
+      clusterLine +
       labelLine +
-      `🔄 <b>SWAP</b>  🔴 <b><u>${fromName}</u></b> <b>${fromAmountFmt}</b>  TO  🟢 <b><u>${toName}</u></b> <b>${toAmountFmt}</b>${mcFmt ? `  📊 <b>${mcFmt}</b>` : ''}\n` +
+      `${headerBadge}  🔴 <b><u>${fromName}</u></b> <b>${fromAmountFmt}</b>  TO  🟢 <b><u>${toName}</u></b> <b>${toAmountFmt}</b>${mcFmt ? `  📊 <b>${mcFmt}</b>` : ''}\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
       `👛 <b>Wallet:</b> <code>${walletShort}</code>\n` +
       usdLine +
@@ -1682,6 +2024,175 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * FIFO cost-basis PnL: walks all Trade records for a wallet in chronological
+   * order and maintains a per-mint queue of buy lots. SELLs pop lots FIFO;
+   * realized PnL = proceeds − popped cost. Any remaining lots at the end
+   * represent the open cost basis for unrealized PnL.
+   *
+   * Trades with totalUsd = 0 (e.g. old backfilled rows before we started
+   * pricing) are skipped so they don't corrupt the math.
+   */
+  private async computeFifoPnl(walletAddress: string): Promise<{
+    perMint: Map<
+      string,
+      {
+        mint: string;
+        symbol: string;
+        name: string;
+        lots: Array<{ amount: number; costUsd: number }>;
+        realizedUsd: number;
+        totalBoughtUsd: number;
+        totalSoldUsd: number;
+        tokensBought: number;
+        tokensSold: number;
+        firstTradeAt: Date;
+        lastTradeAt: Date;
+        trades: number;
+        closedPnls: number[];
+      }
+    >;
+    totalRealized: number;
+    totalBought: number;
+    totalSold: number;
+    tradeCount: number;
+    priceableTradeCount: number;
+  }> {
+    const trades = await this.prisma.trade.findMany({
+      where: { walletAddress },
+      orderBy: { timestamp: 'asc' },
+    });
+
+    const perMint = new Map<
+      string,
+      {
+        mint: string;
+        symbol: string;
+        name: string;
+        lots: Array<{ amount: number; costUsd: number }>;
+        realizedUsd: number;
+        totalBoughtUsd: number;
+        totalSoldUsd: number;
+        tokensBought: number;
+        tokensSold: number;
+        firstTradeAt: Date;
+        lastTradeAt: Date;
+        trades: number;
+        closedPnls: number[];
+      }
+    >();
+
+    let totalBought = 0;
+    let totalSold = 0;
+    let totalRealized = 0;
+    let priceableTradeCount = 0;
+
+    for (const t of trades) {
+      if (t.totalUsd <= 0 || t.tokenAmount <= 0) continue;
+      priceableTradeCount++;
+
+      let entry = perMint.get(t.tokenMint);
+      if (!entry) {
+        entry = {
+          mint: t.tokenMint,
+          symbol: t.tokenSymbol,
+          name: t.tokenName,
+          lots: [],
+          realizedUsd: 0,
+          totalBoughtUsd: 0,
+          totalSoldUsd: 0,
+          tokensBought: 0,
+          tokensSold: 0,
+          firstTradeAt: t.timestamp,
+          lastTradeAt: t.timestamp,
+          trades: 0,
+          closedPnls: [],
+        };
+        perMint.set(t.tokenMint, entry);
+      }
+      // Backfill symbol/name if a later record has better metadata.
+      if (t.tokenSymbol && !entry.symbol) entry.symbol = t.tokenSymbol;
+      if (t.tokenName && !entry.name) entry.name = t.tokenName;
+      entry.lastTradeAt = t.timestamp;
+      entry.trades++;
+
+      // Treat token-to-token SWAPs as a BUY of the received token — we don't
+      // have both sides of the swap in a single Trade row so we can't handle
+      // the sold-token side cleanly. Acceptable for typical degen flow which
+      // is overwhelmingly SOL↔token.
+      if (t.type === 'BUY' || t.type === 'SWAP') {
+        entry.lots.push({ amount: t.tokenAmount, costUsd: t.totalUsd });
+        entry.totalBoughtUsd += t.totalUsd;
+        entry.tokensBought += t.tokenAmount;
+        totalBought += t.totalUsd;
+      } else if (t.type === 'SELL') {
+        let remaining = t.tokenAmount;
+        let costOfSold = 0;
+        while (remaining > 0 && entry.lots.length > 0) {
+          const lot = entry.lots[0];
+          if (lot.amount <= remaining + 1e-9) {
+            costOfSold += lot.costUsd;
+            remaining -= lot.amount;
+            entry.lots.shift();
+          } else {
+            const fraction = remaining / lot.amount;
+            const takenCost = lot.costUsd * fraction;
+            costOfSold += takenCost;
+            lot.amount -= remaining;
+            lot.costUsd -= takenCost;
+            remaining = 0;
+          }
+        }
+        const soldPortion = t.tokenAmount - remaining;
+        const proceeds =
+          t.tokenAmount > 0 ? (soldPortion / t.tokenAmount) * t.totalUsd : 0;
+        const realized = proceeds - costOfSold;
+        entry.realizedUsd += realized;
+        entry.totalSoldUsd += proceeds;
+        entry.tokensSold += soldPortion;
+        entry.closedPnls.push(realized);
+        totalSold += proceeds;
+        totalRealized += realized;
+      }
+    }
+
+    return {
+      perMint,
+      totalRealized,
+      totalBought,
+      totalSold,
+      tradeCount: trades.length,
+      priceableTradeCount,
+    };
+  }
+
+  /**
+   * Batched current price lookup via Jupiter Lite Price API v3. Returns a map
+   * of mint → USD price. Silently drops mints without a price.
+   */
+  async getCurrentPrices(mints: string[]): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    if (mints.length === 0) return out;
+    const unique = Array.from(new Set(mints));
+    const CHUNK = 50;
+    for (let i = 0; i < unique.length; i += CHUNK) {
+      const slice = unique.slice(i, i + CHUNK);
+      try {
+        const r = await fetch(
+          `https://lite-api.jup.ag/price/v3?ids=${slice.join(',')}`,
+        );
+        const d = await r.json();
+        for (const [mint, entry] of Object.entries<any>(d ?? {})) {
+          const p = entry?.usdPrice ?? entry?.price;
+          if (typeof p === 'number' && p > 0) out.set(mint, p);
+        }
+      } catch {
+        /* best effort */
+      }
+    }
+    return out;
+  }
+
   async getPnlAnalysis(address: string): Promise<string> {
     try {
       new PublicKey(address);
@@ -1689,40 +2200,274 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       throw new Error('invalid_address');
     }
 
-    const trades = await this.prisma.trade.findMany({
-      where: { walletAddress: address },
-      orderBy: { timestamp: 'asc' },
-    });
+    const { perMint, totalRealized, totalBought, totalSold, tradeCount } =
+      await this.computeFifoPnl(address);
 
-    if (!trades.length) return '📭 No trades found for PnL analysis.';
+    if (tradeCount === 0)
+      return '📭 No trades found. Run /backfill first, or wait for new trades to be recorded.';
+    if (perMint.size === 0)
+      return '📭 No priced trades yet. Live trades from now on are priced automatically; run /backfill for historical trades.';
 
-    let totalBuyUsd = 0;
-    let totalSellUsd = 0;
-    let pnl = 0;
+    // Fetch current prices for mints that still have open lots (unrealized PnL)
+    const openMints = Array.from(perMint.values())
+      .filter((e) => e.lots.length > 0)
+      .map((e) => e.mint);
+    const currentPrices = await this.getCurrentPrices(openMints);
 
-    for (const trade of trades) {
-      if (trade.type === 'BUY') {
-        totalBuyUsd += trade.totalUsd;
-      } else if (trade.type === 'SELL') {
-        totalSellUsd += trade.totalUsd;
-      }
+    // Compute per-token summary
+    type TokenPnl = {
+      symbol: string;
+      mint: string;
+      realized: number;
+      unrealized: number;
+      total: number;
+      totalBoughtUsd: number;
+      returnPct: number;
+      remaining: number;
+      wins: number;
+      losses: number;
+    };
+    const tokenPnls: TokenPnl[] = [];
+    let totalUnrealized = 0;
+    let totalWins = 0;
+    let totalLosses = 0;
+
+    for (const e of perMint.values()) {
+      const remaining = e.lots.reduce((s, l) => s + l.amount, 0);
+      const remainingCost = e.lots.reduce((s, l) => s + l.costUsd, 0);
+      const currentPrice = currentPrices.get(e.mint) ?? 0;
+      const currentValue = remaining * currentPrice;
+      const unrealized =
+        currentPrice > 0 && remaining > 0 ? currentValue - remainingCost : 0;
+      const total = e.realizedUsd + unrealized;
+      const wins = e.closedPnls.filter((p) => p > 0).length;
+      const losses = e.closedPnls.filter((p) => p < 0).length;
+      totalUnrealized += unrealized;
+      totalWins += wins;
+      totalLosses += losses;
+      tokenPnls.push({
+        symbol: e.symbol || `${e.mint.slice(0, 4)}...${e.mint.slice(-4)}`,
+        mint: e.mint,
+        realized: e.realizedUsd,
+        unrealized,
+        total,
+        totalBoughtUsd: e.totalBoughtUsd,
+        returnPct:
+          e.totalBoughtUsd > 0 ? (total / e.totalBoughtUsd) * 100 : 0,
+        remaining,
+        wins,
+        losses,
+      });
     }
 
-    pnl = totalSellUsd - totalBuyUsd;
-    const pnlPct = totalBuyUsd > 0 ? (pnl / totalBuyUsd) * 100 : 0;
-    const emoji = pnl >= 0 ? '📈' : '📉';
+    const totalPnl = totalRealized + totalUnrealized;
+    const totalReturnPct = totalBought > 0 ? (totalPnl / totalBought) * 100 : 0;
+    const winRate =
+      totalWins + totalLosses > 0
+        ? (totalWins / (totalWins + totalLosses)) * 100
+        : 0;
 
-    return [
+    tokenPnls.sort((a, b) => b.total - a.total);
+    const winners = tokenPnls.filter((t) => t.total > 0).slice(0, 5);
+    const losers = tokenPnls
+      .filter((t) => t.total < 0)
+      .sort((a, b) => a.total - b.total)
+      .slice(0, 5);
+
+    const sign = (n: number) => (n >= 0 ? '+' : '');
+    const emoji = (n: number) => (n >= 0 ? '🟢' : '🔴');
+    const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
+
+    const line = (t: TokenPnl) => {
+      const openTag = t.remaining > 0 ? ' 🟡 open' : '';
+      const symLink = `<a href="https://dexscreener.com/solana/${t.mint}">$${t.symbol}</a>`;
+      return (
+        `  ${symLink}  ${emoji(t.total)} <b>${sign(t.total)}$${t.total.toFixed(2)}</b>` +
+        `  (${sign(t.returnPct)}${t.returnPct.toFixed(1)}%)${openTag}`
+      );
+    };
+
+    const lines: string[] = [
       `┌─────────────────────────────`,
       `│ 📊 <b>PnL ANALYSIS</b>`,
-      `│ 👛 ${address.slice(0, 6)}...${address.slice(-4)}`,
-      `└─────────────────────────────\n`,
-      `${emoji} <b>Total PnL: ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} USD</b>`,
-      `� Total Bought: <b>${totalBuyUsd.toFixed(2)} USD</b>`,
-      `📉 Total Sold: <b>${totalSellUsd.toFixed(2)} USD</b>`,
-      `📊 Return: <b>${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</b>`,
-      `🔢 Trades: <b>${trades.length}</b>`,
-    ].join('\n');
+      `│ 👛 <a href="https://solscan.io/account/${address}">${short}</a>`,
+      `└─────────────────────────────`,
+      ``,
+      `${emoji(totalPnl)} <b>Total PnL: ${sign(totalPnl)}$${totalPnl.toFixed(2)}</b> (${sign(totalReturnPct)}${totalReturnPct.toFixed(1)}%)`,
+      `├ Realized:   <b>${sign(totalRealized)}$${totalRealized.toFixed(2)}</b>`,
+      `├ Unrealized: <b>${sign(totalUnrealized)}$${totalUnrealized.toFixed(2)}</b>`,
+      `├ Bought:     <b>$${totalBought.toFixed(2)}</b>`,
+      `├ Sold:       <b>$${totalSold.toFixed(2)}</b>`,
+      `└ Win rate:   <b>${winRate.toFixed(0)}%</b>  (${totalWins}W · ${totalLosses}L · ${perMint.size} tokens)`,
+      ``,
+    ];
+
+    if (winners.length > 0) {
+      lines.push(`🏆 <b>Top winners</b>`);
+      winners.forEach((t) => lines.push(line(t)));
+      lines.push(``);
+    }
+    if (losers.length > 0) {
+      lines.push(`💀 <b>Top losers</b>`);
+      losers.forEach((t) => lines.push(line(t)));
+      lines.push(``);
+    }
+
+    lines.push(
+      `<i>FIFO cost basis · uses trades in DB (${tradeCount} total). Run /backfill if numbers look off.</i>`,
+    );
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Currently held positions per Trade table + on-chain balance check.
+   * Cross-references FIFO remaining tokens against Helius DAS balance and
+   * flags mismatch (e.g. tokens received via transfer or sent out).
+   */
+  async getOpenPositions(address: string): Promise<string> {
+    try {
+      new PublicKey(address);
+    } catch {
+      throw new Error('invalid_address');
+    }
+
+    const { perMint } = await this.computeFifoPnl(address);
+
+    // Compute FIFO remaining per mint
+    type Row = {
+      mint: string;
+      symbol: string;
+      remaining: number; // FIFO remaining
+      onChain: number; // Helius balance
+      costUsd: number; // FIFO remaining cost
+      currentPrice: number;
+      currentValue: number;
+      unrealized: number;
+    };
+    const mintsWithLots: Row[] = [];
+    for (const e of perMint.values()) {
+      const remaining = e.lots.reduce((s, l) => s + l.amount, 0);
+      const costUsd = e.lots.reduce((s, l) => s + l.costUsd, 0);
+      if (remaining <= 0) continue;
+      mintsWithLots.push({
+        mint: e.mint,
+        symbol: e.symbol || `${e.mint.slice(0, 4)}...${e.mint.slice(-4)}`,
+        remaining,
+        onChain: 0,
+        costUsd,
+        currentPrice: 0,
+        currentValue: 0,
+        unrealized: 0,
+      });
+    }
+
+    if (mintsWithLots.length === 0)
+      return '📭 No open positions tracked. Run /backfill or wait for new BUY alerts.';
+
+    // Fetch current prices + on-chain balances in parallel.
+    const [prices, onChainBalances] = await Promise.all([
+      this.getCurrentPrices(mintsWithLots.map((r) => r.mint)),
+      this.getOnChainTokenBalances(address),
+    ]);
+
+    let totalCost = 0;
+    let totalValue = 0;
+    for (const r of mintsWithLots) {
+      r.currentPrice = prices.get(r.mint) ?? 0;
+      r.onChain = onChainBalances.get(r.mint) ?? 0;
+      r.currentValue = r.remaining * r.currentPrice;
+      r.unrealized = r.currentValue - r.costUsd;
+      totalCost += r.costUsd;
+      totalValue += r.currentValue;
+    }
+
+    mintsWithLots.sort((a, b) => b.currentValue - a.currentValue);
+
+    const totalUnrealized = totalValue - totalCost;
+    const totalReturnPct = totalCost > 0 ? (totalUnrealized / totalCost) * 100 : 0;
+    const sign = (n: number) => (n >= 0 ? '+' : '');
+    const emoji = (n: number) => (n >= 0 ? '🟢' : '🔴');
+    const short = `${address.slice(0, 6)}...${address.slice(-4)}`;
+
+    const lines: string[] = [
+      `┌─────────────────────────────`,
+      `│ 📈 <b>OPEN POSITIONS</b>`,
+      `│ 👛 <a href="https://solscan.io/account/${short}">${short}</a>`,
+      `└─────────────────────────────`,
+      ``,
+      `${emoji(totalUnrealized)} <b>Unrealized: ${sign(totalUnrealized)}$${totalUnrealized.toFixed(2)}</b> (${sign(totalReturnPct)}${totalReturnPct.toFixed(1)}%)`,
+      `├ Cost basis:  <b>$${totalCost.toFixed(2)}</b>`,
+      `├ Current:     <b>$${totalValue.toFixed(2)}</b>`,
+      `└ Positions:   <b>${mintsWithLots.length}</b>`,
+      ``,
+    ];
+
+    for (const r of mintsWithLots) {
+      const symLink = `<a href="https://dexscreener.com/solana/${r.mint}">$${r.symbol}</a>`;
+      const balanceLine =
+        r.onChain > 0 && Math.abs(r.onChain - r.remaining) / r.remaining > 0.1
+          ? `\n     ⚠️ On-chain: ${r.onChain.toLocaleString(undefined, { maximumFractionDigits: 2 })}  (transferred in/out)`
+          : '';
+      const priceLine =
+        r.currentPrice > 0
+          ? `${r.currentPrice < 0.0001 ? r.currentPrice.toExponential(2) : `$${r.currentPrice.toFixed(6)}`}`
+          : 'no price';
+      lines.push(
+        `🪙 ${symLink}  ${emoji(r.unrealized)} <b>${sign(r.unrealized)}$${r.unrealized.toFixed(2)}</b>`,
+        `   💰 ${r.remaining.toLocaleString(undefined, { maximumFractionDigits: 2 })}  ·  📊 ${priceLine}`,
+        `   💵 Cost: $${r.costUsd.toFixed(2)}  ·  Value: <b>$${r.currentValue.toFixed(2)}</b>${balanceLine}`,
+        '',
+      );
+    }
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Fetch token balances from Helius DAS. Returns map of mint → uiAmount.
+   */
+  private async getOnChainTokenBalances(
+    address: string,
+  ): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    try {
+      const res = await fetch(
+        `https://mainnet.helius-rpc.com/?api-key=${this.apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'getAssetsByOwner',
+            params: {
+              ownerAddress: address,
+              page: 1,
+              limit: 200,
+              displayOptions: { showFungible: true, showNativeBalance: false },
+            },
+          }),
+        },
+      );
+      const data = await res.json();
+      const items: any[] = data?.result?.items || [];
+      for (const item of items) {
+        if (
+          item.interface !== 'FungibleToken' &&
+          item.interface !== 'FungibleAsset'
+        )
+          continue;
+        const info = item.token_info;
+        const balance = info?.balance ?? 0;
+        const decimals = info?.decimals ?? 0;
+        const uiAmount = balance / Math.pow(10, decimals);
+        if (uiAmount > 0) out.set(item.id, uiAmount);
+      }
+    } catch {
+      /* best effort */
+    }
+    return out;
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
