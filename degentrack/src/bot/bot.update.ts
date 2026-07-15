@@ -358,9 +358,7 @@ export class BotUpdate {
     await this.trackUser(ctx);
     const loading = await ctx.reply('⏳ Scoring your tracked wallets...');
     try {
-      const board = await this.solanaService.getWalletLeaderboard(
-        ctx.chat.id,
-      );
+      const board = await this.solanaService.getWalletLeaderboard(ctx.chat.id);
       if (board.length === 0) {
         await ctx.telegram.editMessageText(
           ctx.chat.id,
@@ -378,13 +376,7 @@ export class BotUpdate {
 
       const rows = top.map((w, i) => {
         const rank =
-          i === 0
-            ? '🥇'
-            : i === 1
-              ? '🥈'
-              : i === 2
-                ? '🥉'
-                : ` ${i + 1}.`;
+          i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : ` ${i + 1}.`;
         const short = `${w.address.slice(0, 6)}...${w.address.slice(-4)}`;
         const handle = w.label
           ? `<b>${w.label}</b>  ·  <code>${short}</code>`
@@ -460,13 +452,7 @@ export class BotUpdate {
 
       const rows = top.map((c, i) => {
         const rank =
-          i === 0
-            ? '🥇'
-            : i === 1
-              ? '🥈'
-              : i === 2
-                ? '🥉'
-                : ` ${i + 1}.`;
+          i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : ` ${i + 1}.`;
         const handle = c.username ? `@${c.username}` : `user ${c.callerId}`;
         const peakEmoji = c.avgPeakGainPct >= 0 ? '🟢' : '🔴';
         const peakSign = c.avgPeakGainPct >= 0 ? '+' : '';
@@ -1401,87 +1387,14 @@ export class BotUpdate {
     const replyToId = (ctx.message as any)?.message_id;
     const loading = await ctx.reply('🔍 Fetching token info...');
     try {
-      const { text, imageUrl, symbol, name, price, marketCap } =
-        await this.solanaService.getTokenInfo(mint);
-      const keyboard = {
-        inline_keyboard: this.solanaService.buildTradeButtons(mint),
-      };
+      const { finalText, keyboard, imageUrl } = await this.buildTokenCard(
+        ctx,
+        mint,
+        { recordCall: true },
+      );
       await ctx.telegram
         .deleteMessage(ctx.chat.id, (loading as any).message_id)
         .catch(() => {});
-
-      // Look up the truly earliest call BEFORE we record the current one.
-      // If the earliest call was legacy (no callerId), we show "First seen"
-      // without a handle rather than falsely crediting the next caller.
-      // Always shown — even when the current user IS the first caller —
-      // because seeing "you first called this at $5k, now $10k (+100%)" is
-      // exactly the kind of self-tracking degens want.
-      let firstCallerNote = '';
-      if (isGroup(ctx)) {
-        const first = await this.solanaService
-          .getFirstCaller(ctx.chat.id, mint)
-          .catch(() => null);
-        if (first) {
-          const hasCaller = first.callerId > 0;
-          const label = hasCaller ? 'First called by' : 'First seen';
-          const handle = first.callerUsername
-            ? `@${first.callerUsername}`
-            : hasCaller
-              ? `user ${first.callerId}`
-              : '<i>unknown caller</i>';
-          const timeAgo = this.humanTimeAgo(first.calledAt);
-          const detailLine =
-            first.mcAtCall > 0 && marketCap > 0
-              ? (() => {
-                  const gainPct =
-                    ((marketCap - first.mcAtCall) / first.mcAtCall) * 100;
-                  const gainEmoji = gainPct >= 0 ? '🟢' : '🔴';
-                  const gainSign = gainPct >= 0 ? '+' : '';
-                  return `└ MC then: <b>${this.fmtCompactUsd(first.mcAtCall)}</b>  ·  now <b>${this.fmtCompactUsd(marketCap)}</b>  ·  ${gainEmoji} <b>${gainSign}${gainPct.toFixed(1)}%</b>  ·  <i>${timeAgo}</i>`;
-                })()
-              : `└ <i>${timeAgo}</i>`;
-          firstCallerNote =
-            `🎯 <b>${label} ${handle}</b>\n` + detailLine + '\n\n';
-        }
-
-        this.solanaService
-          .recordGroupTokenCall(ctx.chat.id, mint, symbol, name, {
-            id: ctx.from?.id ?? 0,
-            username: (ctx.from as any)?.username ?? '',
-            priceAtCall: price,
-            mcAtCall: marketCap,
-          })
-          .catch(() => {});
-      }
-
-      // "Tracked wallets buying this" section — pulls from the Trade table.
-      // For groups this reads the group's tracked wallets; for DMs, the user's.
-      let trackedActivityNote = '';
-      const recentBuys = await this.solanaService
-        .getRecentTrackedBuysForMint(ctx.chat.id, mint, 24)
-        .catch(() => [] as Awaited<ReturnType<typeof this.solanaService.getRecentTrackedBuysForMint>>);
-      if (recentBuys.length > 0) {
-        const shown = recentBuys.slice(0, 5);
-        const rest = recentBuys.length - shown.length;
-        const lines = shown.map((b) => {
-          const short = `${b.walletAddress.slice(0, 6)}...${b.walletAddress.slice(-4)}`;
-          const who = b.label
-            ? `<b>${b.label}</b>  ·  <code>${short}</code>`
-            : `<code>${short}</code>`;
-          const usd = b.totalUsd > 0 ? `~$${b.totalUsd.toFixed(2)}` : 'unknown';
-          const times = b.buys > 1 ? ` (${b.buys} buys)` : '';
-          const ago = this.humanTimeAgo(b.lastBuyAt);
-          return `   • ${who}  ·  ${usd}${times}  ·  <i>${ago}</i>`;
-        });
-        const more = rest > 0 ? `\n   • …and ${rest} more` : '';
-        trackedActivityNote =
-          `👛 <b>Your tracked wallets bought this (24h)</b>\n` +
-          lines.join('\n') +
-          more +
-          `\n\n`;
-      }
-
-      const finalText = firstCallerNote + trackedActivityNote + text;
 
       if (imageUrl) {
         await ctx.replyWithPhoto(imageUrl, {
@@ -1506,6 +1419,154 @@ export class BotUpdate {
         { parse_mode: 'HTML' },
       );
     }
+  }
+
+  // Re-render an existing token call card in place with fresh price / MC.
+  // Unlike showTokenInfo this does NOT record a new call — a refresh is not a
+  // new call, so the first-caller credit and trending counts stay untouched.
+  @Action(/^refresh_token:(.+)$/)
+  async onRefreshToken(@Ctx() ctx: Context): Promise<void> {
+    const mint = (ctx as any).match[1];
+    try {
+      const { finalText, keyboard } = await this.buildTokenCard(ctx, mint, {
+        recordCall: false,
+      });
+      // A freshness stamp guarantees the edit differs from the current text,
+      // avoiding Telegram's "message is not modified" 400 when price is flat.
+      const stamped = finalText + `\n\n🔄 <i>Updated ${this.humanClock()}</i>`;
+      const isPhoto = !!(ctx.callbackQuery as any)?.message?.photo;
+      if (isPhoto) {
+        await ctx.editMessageCaption(stamped, {
+          parse_mode: 'HTML',
+          reply_markup: keyboard,
+        } as any);
+      } else {
+        await ctx.editMessageText(stamped, {
+          parse_mode: 'HTML',
+          reply_markup: keyboard,
+          link_preview_options: { is_disabled: true },
+        } as any);
+      }
+      await ctx.answerCbQuery('🔄 Updated').catch(() => {});
+    } catch {
+      await ctx
+        .answerCbQuery('❌ Could not refresh — try again')
+        .catch(() => {});
+    }
+  }
+
+  // Builds the shared token "call" card (text + inline keyboard). Used by the
+  // initial paste (recordCall: true) and the Refresh button (recordCall: false).
+  private async buildTokenCard(
+    ctx: Context,
+    mint: string,
+    opts: { recordCall: boolean },
+  ): Promise<{ finalText: string; keyboard: any; imageUrl?: string }> {
+    const { text, imageUrl, symbol, name, price, marketCap } =
+      await this.solanaService.getTokenInfo(mint);
+
+    const keyboard = {
+      inline_keyboard: [
+        ...this.solanaService.buildTradeButtons(mint),
+        [{ text: '🔄 Refresh', callback_data: `refresh_token:${mint}` }],
+      ],
+    };
+
+    // Look up the truly earliest call BEFORE we record the current one.
+    // If the earliest call was legacy (no callerId), we show "First seen"
+    // without a handle rather than falsely crediting the next caller.
+    // Always shown — even when the current user IS the first caller —
+    // because seeing "you first called this at $5k, now $10k (+100%)" is
+    // exactly the kind of self-tracking degens want.
+    let firstCallerNote = '';
+    if (isGroup(ctx)) {
+      const first = await this.solanaService
+        .getFirstCaller(ctx.chat.id, mint)
+        .catch(() => null);
+      if (first) {
+        const hasCaller = first.callerId > 0;
+        const label = hasCaller ? 'First called by' : 'First seen';
+        const handle = first.callerUsername
+          ? `@${first.callerUsername}`
+          : hasCaller
+            ? `user ${first.callerId}`
+            : '<i>unknown caller</i>';
+        const timeAgo = this.humanTimeAgo(first.calledAt);
+        const detailLine =
+          first.mcAtCall > 0 && marketCap > 0
+            ? (() => {
+                const gainPct =
+                  ((marketCap - first.mcAtCall) / first.mcAtCall) * 100;
+                const gainEmoji = gainPct >= 0 ? '🟢' : '🔴';
+                const gainSign = gainPct >= 0 ? '+' : '';
+                return `└ MC then: <b>${this.fmtCompactUsd(first.mcAtCall)}</b>  ·  now <b>${this.fmtCompactUsd(marketCap)}</b>  ·  ${gainEmoji} <b>${gainSign}${gainPct.toFixed(1)}%</b>  ·  <i>${timeAgo}</i>`;
+              })()
+            : `└ <i>${timeAgo}</i>`;
+        firstCallerNote = `🎯 <b>${label} ${handle}</b>\n` + detailLine;
+      }
+
+      if (opts.recordCall) {
+        this.solanaService
+          .recordGroupTokenCall(ctx.chat.id, mint, symbol, name, {
+            id: ctx.from?.id ?? 0,
+            username: (ctx.from as any)?.username ?? '',
+            priceAtCall: price,
+            mcAtCall: marketCap,
+          })
+          .catch(() => {});
+      }
+    }
+
+    // "Tracked wallets buying this" section — pulls from the Trade table.
+    // For groups this reads the group's tracked wallets; for DMs, the user's.
+    let trackedActivityNote = '';
+    const recentBuys = await this.solanaService
+      .getRecentTrackedBuysForMint(ctx.chat.id, mint, 24)
+      .catch(
+        () =>
+          [] as Awaited<
+            ReturnType<typeof this.solanaService.getRecentTrackedBuysForMint>
+          >,
+      );
+    if (recentBuys.length > 0) {
+      const shown = recentBuys.slice(0, 5);
+      const rest = recentBuys.length - shown.length;
+      const lines = shown.map((b) => {
+        const short = `${b.walletAddress.slice(0, 6)}...${b.walletAddress.slice(-4)}`;
+        const who = b.label
+          ? `<b>${b.label}</b>  ·  <code>${short}</code>`
+          : `<code>${short}</code>`;
+        const usd = b.totalUsd > 0 ? `~$${b.totalUsd.toFixed(2)}` : 'unknown';
+        const times = b.buys > 1 ? ` (${b.buys} buys)` : '';
+        const ago = this.humanTimeAgo(b.lastBuyAt);
+        return `   • ${who}  ·  ${usd}${times}  ·  <i>${ago}</i>`;
+      });
+      const more = rest > 0 ? `\n   • …and ${rest} more` : '';
+      trackedActivityNote =
+        `👛 <b>Your tracked wallets bought this (24h)</b>\n` +
+        lines.join('\n') +
+        more +
+        `\n\n`;
+    }
+
+    // Caller credit goes at the BOTTOM — the token info card reads first, then
+    // "who called it and how it's done since" as the closing line.
+    const finalText =
+      trackedActivityNote +
+      text +
+      (firstCallerNote ? '\n\n' + firstCallerNote : '');
+    return { finalText, keyboard, imageUrl };
+  }
+
+  private humanClock(): string {
+    return (
+      new Date().toLocaleTimeString('en-GB', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        timeZone: 'UTC',
+      }) + ' UTC'
+    );
   }
 
   private fmtCompactUsd(n: number): string {
