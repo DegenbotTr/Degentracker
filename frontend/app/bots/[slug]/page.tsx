@@ -169,8 +169,8 @@ export default async function BotDetailPage(props: PageProps<"/bots/[slug]">) {
                 />
                 <HowStep
                   step="3"
-                  title="Watch a wallet"
-                  body="Use /watch to subscribe to any Solana wallet. The bot validates the address, opens a WebSocket, and shares the subscription across all users watching the same wallet."
+                  title="Watch a wallet or scan a token"
+                  body="Use /watch to subscribe to any Solana wallet for real-time buy/sell alerts. Or paste any token contract — Solana or EVM (ETH, BSC, Base, Arbitrum) — to get a full info card with price, market cap, liquidity, and security checks."
                 />
                 <HowStep
                   step="4"
@@ -251,10 +251,10 @@ export default async function BotDetailPage(props: PageProps<"/bots/[slug]">) {
                       Group alpha tracking
                     </div>
                     <div className="mt-1 text-sm leading-relaxed text-purple-300/80">
-                      Paste any Solana token CA in a group and the bot records
-                      who called it first, tracks peak gains, and builds a
-                      leaderboard. Perfect for coordinating with your trading
-                      team.
+                      Paste any token CA — Solana or EVM (Ethereum, BSC, Base,
+                      Arbitrum) — in a group and the bot records who called it
+                      first, tracks peak gains, and builds a leaderboard.
+                      Perfect for coordinating with your trading team.
                     </div>
                   </div>
                 </div>
@@ -270,7 +270,7 @@ export default async function BotDetailPage(props: PageProps<"/bots/[slug]">) {
               </div>
               <p className="mt-3 text-sm text-zinc-300">
                 Fastest way to see the bot in action — open it in Telegram and
-                paste any Solana wallet.
+                paste a Solana wallet or any token contract.
               </p>
               <a
                 href={bot.telegramUrl}

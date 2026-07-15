@@ -1,24 +1,14 @@
 import Link from "next/link";
+import { BrandMark } from "./BrandMark";
+
+const COMMUNITY_URL = "https://t.me/Degenhubtrade";
 
 export function SiteNav() {
   return (
     <header className="sticky top-0 z-40 border-b border-border/60 bg-black/70 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
         <Link href="/" className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-accent to-accent-2 text-black">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              className="h-4 w-4"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M4 6h13l3 3-3 3H4z" />
-              <path d="M20 18H7l-3-3 3-3h13z" />
-            </svg>
-          </span>
+          <BrandMark size={34} />
           <span className="text-sm font-semibold tracking-tight text-white">
             DegenHub
           </span>
@@ -31,16 +21,19 @@ export function SiteNav() {
           <NavLink href="/">Home</NavLink>
           <NavLink href="/bots">Bots</NavLink>
           <NavLink href="/#how">How it works</NavLink>
-          <NavLink href="/#stack">Stack</NavLink>
+          <NavLink href="/#community">Community</NavLink>
         </nav>
 
         <div className="flex items-center gap-2">
-          <Link
-            href="/bots"
-            className="hidden rounded-full border border-border bg-panel px-4 py-2 text-xs font-medium text-white transition-colors hover:border-white/20 hover:bg-panel-2 sm:inline-flex"
+          <a
+            href={COMMUNITY_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="hidden items-center gap-1.5 rounded-full border border-border bg-panel px-4 py-2 text-xs font-medium text-white transition-colors hover:border-accent-2/40 hover:bg-panel-2 sm:inline-flex"
           >
-            View bots
-          </Link>
+            <TelegramIcon className="h-3.5 w-3.5 text-accent-2" />
+            Community
+          </a>
           <a
             href="https://t.me/De1trackBot"
             target="_blank"
@@ -63,6 +56,14 @@ export function SiteNav() {
         </div>
       </div>
     </header>
+  );
+}
+
+function TelegramIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
+      <path d="M21.05 3.05 2.98 9.98c-1.23.48-1.22 1.16-.22 1.46l4.63 1.44 10.72-6.76c.51-.31.97-.14.59.2l-8.69 7.85-.34 5.05c.5 0 .72-.22 1-.5l2.4-2.34 4.98 3.68c.92.51 1.58.24 1.81-.85l3.28-15.46c.34-1.38-.53-2-1.42-1.7Z" />
+    </svg>
   );
 }
 

@@ -24,27 +24,28 @@ export const bots: Bot[] = [
   {
     slug: "sol-wallet-watcher",
     name: "DegenTrack",
-    tagline: "Real-time Solana wallet tracker for traders.",
+    tagline: "Real-time wallet tracking + multi-chain token scanner.",
     description:
-      "Watch any Solana wallet and get instant alerts on buys & sells with USD value, token amounts, and price paid. Also check portfolio snapshots, transaction history, PnL analysis, and live token prices — all inside Telegram.",
+      "Watch any Solana wallet and get instant alerts on buys & sells with USD value, token amounts, and price paid. Paste any token contract — Solana or EVM (Ethereum, BSC, Base, Arbitrum) — for a full info card with price, market cap, liquidity, and security checks. Plus portfolio snapshots, PnL analysis, group call tracking, and live prices — all inside Telegram.",
     status: "live",
-    chain: "Solana",
+    chain: "Solana + EVM",
     telegramUrl: "https://t.me/De1trackBot",
     category: "On-chain monitoring",
     accent: "green",
     features: [
-      "Real-time buy/sell alerts via Helius WebSocket",
+      "Real-time Solana buy/sell alerts via Helius WebSocket",
+      "Multi-chain token cards — Solana, Ethereum, BSC, Base & Arbitrum",
+      "EVM security checks via GoPlus — honeypot, buy/sell tax, mintable, ownership",
+      "Solana security via RugCheck — mint/freeze authority, top holders, dev sold",
+      "One-tap trade buttons per chain (Trojan, Photon, Maestro, Banana, BullX)",
       "Portfolio snapshot with SPL tokens, SOL, and USD value",
       "PnL analysis with realized/unrealized gains tracking",
-      "Wallet leaderboard showing best performers",
-      "Open positions view with current token holdings",
+      "Wallet leaderboard and open positions view",
       "Historical trade backfill for complete PnL tracking",
       "Per-user and per-wallet minimum USD trade filters",
-      "Wallet labels and tags for organization",
-      "Pause/resume notifications per wallet",
-      "Group token call tracking with leaderboard and trending",
-      "Token info cards with market cap and performance",
-      "Chain guard rejects EVM / BTC / TRON addresses",
+      "Wallet labels, tags, and pause/resume per wallet",
+      "Group call tracking with first-caller credit, trending & leaderboard",
+      "Live-refresh button on token cards for fresh price & market cap",
     ],
     commands: [
       { command: "/start", description: "Boot the bot and show the main menu" },
@@ -89,6 +90,11 @@ export const bots: Bot[] = [
         description: "Check any token price by mint address or symbol",
       },
       {
+        command: "<paste CA>",
+        description:
+          "Paste any Solana or EVM contract for a full token info card",
+      },
+      {
         command: "/minsize <usd>",
         description: "Set minimum trade alert size filter (0 for all)",
       },
@@ -97,7 +103,7 @@ export const bots: Bot[] = [
       { command: "/help", description: "Show all available commands" },
       {
         command: "/trending",
-        description: "View most-called tokens in group (24h)",
+        description: "Most-called tokens in group (24h, any chain)",
       },
       {
         command: "/leaderboard",
@@ -111,8 +117,10 @@ export const bots: Bot[] = [
       "PostgreSQL",
       "@solana/web3.js",
       "Helius RPC + DAS",
-      "Jupiter Price API",
       "DexScreener API",
+      "GoPlus Security",
+      "GeckoTerminal",
+      "RugCheck",
     ],
   },
 ];

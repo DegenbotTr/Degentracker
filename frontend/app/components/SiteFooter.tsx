@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { BrandMark } from "./BrandMark";
+
+const COMMUNITY_URL = "https://t.me/Degenhubtrade";
 
 export function SiteFooter() {
   return (
@@ -7,26 +10,23 @@ export function SiteFooter() {
         <div className="grid gap-10 md:grid-cols-4">
           <div className="md:col-span-2">
             <div className="flex items-center gap-2.5">
-              <span className="flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-accent to-accent-2 text-black">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  className="h-3.5 w-3.5"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M4 6h13l3 3-3 3H4z" />
-                  <path d="M20 18H7l-3-3 3-3h13z" />
-                </svg>
-              </span>
+              <BrandMark size={30} />
               <span className="text-sm font-semibold text-white">DegenHub</span>
             </div>
             <p className="mt-4 max-w-sm text-sm leading-relaxed text-muted">
-              Home for traders bots. Fast, focused Telegram tools for the Solana
-              ecosystem — real-time on-chain intel where you already are.
+              Home for traders bots — a growing collection of fast, focused
+              Telegram trading tools across Solana and EVM chains. Join the
+              community and trade alongside other degens.
             </p>
+            <a
+              href={COMMUNITY_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-5 inline-flex items-center gap-2 rounded-full border border-accent-2/30 bg-accent-2/10 px-4 py-2 text-xs font-medium text-white transition-colors hover:border-accent-2/60"
+            >
+              <TelegramIcon className="h-3.5 w-3.5 text-accent-2" />
+              Join the DegenHub community
+            </a>
           </div>
 
           <div>
@@ -62,12 +62,22 @@ export function SiteFooter() {
             <ul className="mt-4 space-y-2 text-sm">
               <li>
                 <a
+                  href={COMMUNITY_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-zinc-300 hover:text-white"
+                >
+                  Community
+                </a>
+              </li>
+              <li>
+                <a
                   href="https://t.me/De1trackBot"
                   target="_blank"
                   rel="noreferrer"
                   className="text-zinc-300 hover:text-white"
                 >
-                  Telegram
+                  DegenTrack bot
                 </a>
               </li>
               <li>
@@ -103,5 +113,13 @@ export function SiteFooter() {
         </div>
       </div>
     </footer>
+  );
+}
+
+function TelegramIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
+      <path d="M21.05 3.05 2.98 9.98c-1.23.48-1.22 1.16-.22 1.46l4.63 1.44 10.72-6.76c.51-.31.97-.14.59.2l-8.69 7.85-.34 5.05c.5 0 .72-.22 1-.5l2.4-2.34 4.98 3.68c.92.51 1.58.24 1.81-.85l3.28-15.46c.34-1.38-.53-2-1.42-1.7Z" />
+    </svg>
   );
 }

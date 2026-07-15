@@ -1,6 +1,9 @@
 import Link from "next/link";
+import Image from "next/image";
 import { bots } from "@/lib/bots";
 import { BotCard } from "./components/BotCard";
+
+const COMMUNITY_URL = "https://t.me/Degenhubtrade";
 
 export default function Home() {
   const featured = bots.slice(0, 3);
@@ -9,25 +12,45 @@ export default function Home() {
     <div className="bg-background">
       {/* HERO */}
       <section className="relative overflow-hidden">
-        <div className="grid-bg absolute inset-0" />
-        <div className="hero-glow relative mx-auto max-w-6xl px-6 pt-24 pb-24 sm:pt-32 sm:pb-32">
+        {/* Full-bleed hero art as the section background */}
+        <div className="absolute inset-0">
+          <Image
+            src="/heroimage.png"
+            alt=""
+            fill
+            priority
+            sizes="100vw"
+            className="object-cover object-[70%_center]"
+          />
+          {/* Scrims — keep the art visible but the text readable, and blend
+              the section into the black page at top & bottom */}
+          <div className="absolute inset-0 bg-black/55" />
+          <div className="absolute inset-0 bg-gradient-to-b from-black via-transparent to-background" />
+        </div>
+
+        <div className="relative mx-auto max-w-6xl px-6 pt-28 pb-24 sm:pt-36 sm:pb-32">
           <div className="relative z-10 mx-auto max-w-3xl text-center">
-            <h1 className="mt-6 text-5xl font-semibold leading-[1.05] tracking-tight text-white sm:text-6xl md:text-7xl">
-              Telegram bots that
+            <span className="inline-flex items-center gap-2 rounded-full border border-accent-2/40 bg-black/50 px-3 py-1 text-[11px] font-medium uppercase tracking-wider text-accent-2 backdrop-blur">
+              A growing collection of trading bots
+            </span>
+
+            <h1 className="mt-6 text-5xl font-semibold leading-[1.05] tracking-tight text-white drop-shadow-[0_2px_16px_rgba(0,0,0,0.8)] sm:text-6xl md:text-7xl">
+              Trading bots that
               <br />
-              <span className="text-brand-gradient">move at Solana speed.</span>
+              <span className="text-brand-gradient">move at degen speed.</span>
             </h1>
 
-            <p className="mx-auto mt-6 max-w-xl text-base leading-relaxed text-zinc-400 sm:text-lg">
-              A studio building fast, focused Telegram bots for on-chain
-              traders. Real-time wallet tracking, portfolio insights, and
-              instant alerts — inside the chat app you already use.
+            <p className="mx-auto mt-6 max-w-xl text-base leading-relaxed text-zinc-300 drop-shadow-[0_1px_8px_rgba(0,0,0,0.9)] sm:text-lg">
+              The hub for fast, focused Telegram trading bots — across{" "}
+              <span className="text-white">Solana and EVM</span> chains
+              (Ethereum, BSC, Base, Arbitrum). Real-time wallet tracking,
+              multi-chain token scanning, and a community of traders.
             </p>
 
-            <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
               <Link
                 href="/bots"
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-white px-5 text-sm font-semibold text-black transition-colors hover:bg-zinc-200"
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-white px-6 text-sm font-semibold text-black shadow-lg transition-colors hover:bg-zinc-200"
               >
                 Explore the bots
                 <svg
@@ -43,17 +66,17 @@ export default function Home() {
                 </svg>
               </Link>
               <a
-                href="https://t.me/De1trackBot"
+                href={COMMUNITY_URL}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-border bg-panel px-5 text-sm font-medium text-white transition-colors hover:border-white/20 hover:bg-panel-2"
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-full border border-accent-2/50 bg-black/50 px-6 text-sm font-medium text-white backdrop-blur transition-colors hover:border-accent-2 hover:bg-accent-2/20"
               >
-                <TelegramIcon className="h-4 w-4" />
-                Try DegenTrack
+                <TelegramIcon className="h-4 w-4 text-accent-2" />
+                Join the community
               </a>
             </div>
 
-            <p className="mt-6 text-xs text-muted">
+            <p className="mt-6 text-xs text-zinc-400 drop-shadow-[0_1px_6px_rgba(0,0,0,0.9)]">
               No signup. No custody. Nothing to install. Open a Telegram chat,
               hit start.
             </p>
@@ -86,6 +109,18 @@ export default function Home() {
                     </div>
                     <div className="text-zinc-500">≈ $312.40 • 2s ago</div>
                   </ChatLine>
+                  <ChatLine role="you">0x95ad…c4ce</ChatLine>
+                  <ChatLine role="bot">
+                    <div className="text-white">🪙 SHIBA INU ($SHIB)</div>
+                    <div className="mt-1 text-zinc-400">
+                      MC <span className="text-white">$4.2B</span> · LP{" "}
+                      <span className="text-white">$12M</span> ·{" "}
+                      <span className="text-violet-300">⟠ Ethereum</span>
+                    </div>
+                    <div className="text-zinc-500">
+                      🔒 Honeypot: No · Tax 0/0 · Verified ✓
+                    </div>
+                  </ChatLine>
                 </div>
               </div>
             </div>
@@ -97,7 +132,7 @@ export default function Home() {
       <section className="border-y border-border/60 bg-panel/30">
         <div className="mx-auto grid max-w-6xl grid-cols-2 gap-px overflow-hidden bg-border sm:grid-cols-4">
           <Metric label="Latency" value="<1s" hint="Alert delivery" />
-          <Metric label="Chain" value="Solana" hint="Mainnet only" />
+          <Metric label="Chains" value="5+" hint="Solana + EVM" />
           <Metric label="Custody" value="Zero" hint="Read-only" />
           <Metric label="Bots shipped" value="1" hint="More cooking" />
         </div>
@@ -175,35 +210,80 @@ export default function Home() {
       <section id="stack" className="mx-auto max-w-6xl px-6 py-24">
         <SectionHeader
           eyebrow="Under the hood"
-          title="Built on the boring, reliable parts of the Solana stack."
-          description="Every bot is a NestJS service subscribing to on-chain logs through Helius WebSockets. Prices from Jupiter and CoinGecko. TypeScript end-to-end."
+          title="Built on fast, reliable on-chain infrastructure."
+          description="Every bot is a NestJS service — Solana wallet alerts via Helius WebSockets, multi-chain token data via DexScreener, and EVM security via GoPlus. TypeScript end-to-end."
         />
 
         <div className="mt-12 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           <StackCard
             title="Helius"
-            body="Mainnet RPC and WebSocket subscriptions. DAS API for full portfolio snapshots including SPL tokens."
+            body="Solana mainnet RPC and WebSocket subscriptions. DAS API for full portfolio snapshots including SPL tokens."
           />
           <StackCard
-            title="Jupiter Price API"
-            body="Spot pricing for any SPL token. Used to convert trade sizes into USD for filter thresholds."
+            title="DexScreener"
+            body="Cross-chain price, market cap, and liquidity for Solana and every EVM chain — the backbone of the token info cards."
+          />
+          <StackCard
+            title="GoPlus Security"
+            body="EVM token safety checks — honeypot detection, buy/sell tax, mintability, and ownership risk, keyless and free."
+          />
+          <StackCard
+            title="RugCheck + GeckoTerminal"
+            body="Solana rug analysis and cross-chain token logos, so every card ships with security context and a real image."
           />
           <StackCard
             title="NestJS + Telegraf"
-            body="Every command is a decorated handler. Multi-step flows use a small in-memory state machine per chat."
-          />
-          <StackCard
-            title="@solana/web3.js"
-            body="onLogs() subscriptions catch every confirmed transaction. Parsed instructions detect buy vs sell."
-          />
-          <StackCard
-            title="CoinGecko"
-            body="SOL/USD price for aggregate USD calculations. Best-effort, cached where possible."
+            body="Every command is a decorated handler. Multi-step flows use a small state machine, with state persisted in Postgres via Prisma."
           />
           <StackCard
             title="Zero custody"
             body="Every bot is read-only. No private keys touch the server — ever."
           />
+        </div>
+      </section>
+
+      {/* COMMUNITY */}
+      <section
+        id="community"
+        className="relative overflow-hidden border-t border-border/60 bg-panel/20"
+      >
+        <div className="pointer-events-none absolute inset-0 opacity-70">
+          <div className="absolute -top-32 left-1/2 h-72 w-[560px] -translate-x-1/2 rounded-full bg-accent-2/20 blur-3xl" />
+        </div>
+        <div className="relative mx-auto max-w-4xl px-6 py-24">
+          <div className="overflow-hidden rounded-3xl border border-accent-2/25 bg-gradient-to-b from-accent-2/10 to-transparent p-8 text-center sm:p-12">
+            <span className="inline-flex items-center gap-2 rounded-full border border-accent-2/30 bg-black/40 px-3 py-1 text-[11px] font-medium uppercase tracking-wider text-accent-2">
+              <TelegramIcon className="h-3.5 w-3.5" />
+              The community
+            </span>
+            <h2 className="mt-5 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+              Trade alongside other degens.
+            </h2>
+            <p className="mx-auto mt-4 max-w-lg text-base leading-relaxed text-zinc-300">
+              DegenHub isn&apos;t just bots — it&apos;s a community. Share calls,
+              swap alpha, and get early access to every new bot we ship. Drop a
+              CA in the group and let the bot track who called it first.
+            </p>
+            <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+              <a
+                href={COMMUNITY_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-11 items-center gap-2 rounded-full bg-white px-6 text-sm font-semibold text-black hover:bg-zinc-200"
+              >
+                <TelegramIcon className="h-4 w-4" />
+                Join @Degenhubtrade
+              </a>
+              <a
+                href="https://t.me/De1trackBot"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-11 items-center gap-2 rounded-full border border-border bg-panel px-6 text-sm font-medium text-white hover:border-white/20 hover:bg-panel-2"
+              >
+                Try DegenTrack
+              </a>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -216,11 +296,11 @@ export default function Home() {
 
         <div className="relative mx-auto max-w-3xl px-6 py-24 text-center">
           <h2 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
-            Ready to watch a wallet?
+            Ready to track the chain?
           </h2>
           <p className="mx-auto mt-4 max-w-lg text-base text-zinc-400">
-            Open DegenTrack in Telegram, paste an address, and start catching
-            every trade the moment it lands on-chain.
+            Open DegenTrack in Telegram, paste a wallet or any token contract,
+            and start catching every move the moment it lands on-chain.
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <a

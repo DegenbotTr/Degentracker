@@ -24,14 +24,14 @@ export default function BotsPage() {
               Every bot in the collection.
             </h1>
             <p className="mt-5 max-w-xl text-base leading-relaxed text-zinc-400">
-              Small, sharp Telegram bots for the Solana ecosystem. Each one is
-              built to do one thing well — pick one, hit the launch link, and it
-              works.
+              Small, sharp Telegram bots for on-chain traders — across Solana
+              and EVM chains. Each one is built to do one thing well — pick one,
+              hit the launch link, and it works.
             </p>
 
             <div className="mt-8 flex flex-wrap items-center gap-3 text-xs">
               <StatChip label="Live" value={String(liveCount)} tone="green" />
-              <StatChip label="Chain" value="Solana" tone="purple" />
+              <StatChip label="Chains" value="Sol + EVM" tone="purple" />
               <StatChip label="Custody" value="Zero" tone="neutral" />
               <StatChip label="Cost" value="Free" tone="neutral" />
             </div>

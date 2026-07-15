@@ -14,18 +14,45 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : "http://localhost:3000");
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: "DegenHub — Home for Traders Bots",
   description:
-    "A studio building fast, focused Telegram bots for the Solana ecosystem. Real-time wallet tracking, portfolio insights, and on-chain alerts — all inside Telegram.",
+    "A growing collection of fast, focused Telegram trading bots for degens — across Solana and EVM chains (Ethereum, BSC, Base, Arbitrum). Real-time wallet tracking, multi-chain token cards, and on-chain alerts, plus a community of traders.",
   keywords: [
     "Solana",
+    "Ethereum",
+    "BSC",
+    "Base",
+    "Arbitrum",
+    "EVM",
     "Telegram bot",
+    "trading bot",
     "wallet tracker",
-    "SPL tokens",
-    "Helius",
+    "token scanner",
     "on-chain alerts",
+    "DegenHub",
   ],
+  openGraph: {
+    title: "DegenHub — Home for Traders Bots",
+    description:
+      "A growing collection of Telegram trading bots across Solana and EVM chains. Real-time wallet tracking, multi-chain token cards, and a community of traders.",
+    images: ["/degenlogo.png"],
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "DegenHub — Home for Traders Bots",
+    description:
+      "Telegram trading bots across Solana and EVM chains, plus a community of traders.",
+    images: ["/degenlogo.png"],
+  },
 };
 
 export default function RootLayout({
