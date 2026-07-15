@@ -490,7 +490,8 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       name: string;
       badge: string;
       explorer: string;
-      bullxId: string;
+      bullxId: string; // also used as the GoPlus chain id
+      gecko: string; // GeckoTerminal network slug (token images)
       gmgn?: string;
       honeypot?: string;
     }
@@ -500,6 +501,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       badge: '⟠ Ethereum',
       explorer: 'https://etherscan.io',
       bullxId: '1',
+      gecko: 'eth',
       gmgn: 'eth',
       honeypot: 'ethereum',
     },
@@ -508,6 +510,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       badge: '🟡 BSC',
       explorer: 'https://bscscan.com',
       bullxId: '56',
+      gecko: 'bsc',
       gmgn: 'bsc',
       honeypot: 'bsc',
     },
@@ -516,6 +519,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       badge: '🔵 Base',
       explorer: 'https://basescan.org',
       bullxId: '8453',
+      gecko: 'base',
       gmgn: 'base',
       honeypot: 'base',
     },
@@ -524,6 +528,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       badge: '🔷 Arbitrum',
       explorer: 'https://arbiscan.io',
       bullxId: '42161',
+      gecko: 'arbitrum',
     },
   };
 
@@ -540,6 +545,80 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
   normalizeAddress(address: string): string {
     const trimmed = (address ?? '').trim();
     return this.isEvmAddress(trimmed) ? trimmed.toLowerCase() : trimmed;
+  }
+
+  /**
+   * EVM token logo via GeckoTerminal (free, no key). DexScreener's own
+   * `info.imageUrl` is often absent for EVM tokens, so this is the fallback
+   * that makes most cards show a real image. Returns null on any miss.
+   */
+  private async fetchEvmTokenImage(
+    network: string,
+    mint: string,
+  ): Promise<string | null> {
+    try {
+      const r = await fetch(
+        `https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${mint}`,
+        { headers: { Accept: 'application/json' } },
+      );
+      if (!r.ok) return null;
+      const d = await r.json();
+      const img = d?.data?.attributes?.image_url;
+      return typeof img === 'string' && /^https?:\/\//.test(img) ? img : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * EVM security block via GoPlus (free, no key) — the EVM analogue of the
+   * Solana RugCheck section. Returns a preformatted HTML block, or '' on miss.
+   * `chainId` is the GoPlus chain id (same numbers as bullxId: 1/56/8453/42161).
+   */
+  private async fetchEvmSecurityLine(
+    chainId: string,
+    mint: string,
+  ): Promise<string> {
+    try {
+      const r = await fetch(
+        `https://api.gopluslabs.io/api/v1/token_security/${chainId}?contract_addresses=${mint}`,
+      );
+      if (!r.ok) return '';
+      const d = await r.json();
+      const res = d?.result?.[mint.toLowerCase()];
+      if (!res) return '';
+
+      const isYes = (v: any) => v === '1' || v === 1;
+      const asPct = (v: any) => {
+        const n = parseFloat(v);
+        return isNaN(n) ? null : n * 100;
+      };
+      const taxStr = (t: number | null) =>
+        t == null ? 'N/A' : `${Number.isInteger(t) ? t : t.toFixed(1)}%`;
+      const flag = (bad: boolean) => (bad ? '🔴' : '🟢');
+
+      const honeypot = isYes(res.is_honeypot);
+      const buyTax = asPct(res.buy_tax);
+      const sellTax = asPct(res.sell_tax);
+      const verified = isYes(res.is_open_source);
+      const mintable = isYes(res.is_mintable);
+      const ownerRisk =
+        isYes(res.can_take_back_ownership) || isYes(res.hidden_owner);
+      const holders = parseInt(res.holder_count ?? '0', 10) || 0;
+
+      return (
+        `\n🔒 <b>Security (GoPlus)</b>\n` +
+        `├ Honeypot   ${honeypot ? '🔴 YES — can’t sell' : '🟢 No'}\n` +
+        `├ Buy Tax    ${flag(buyTax != null && buyTax >= 10)} ${taxStr(buyTax)}\n` +
+        `├ Sell Tax   ${flag(sellTax != null && sellTax >= 10)} ${taxStr(sellTax)}\n` +
+        `├ Verified   ${verified ? '🟢 Yes' : '🔴 No'}\n` +
+        `├ Mintable   ${mintable ? '🔴 Yes' : '🟢 No'}\n` +
+        `├ Ownership  ${ownerRisk ? '🔴 Risky' : '🟢 OK'}\n` +
+        `└ Holders    <b>${holders.toLocaleString()}</b>`
+      );
+    } catch {
+      return '';
+    }
   }
 
   // ─── Cached SOL Price ────────────────────────────────────────────────────────
@@ -1120,22 +1199,22 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     const out = new Map<string, number>();
     if (mints.length === 0) return out;
     const unique = Array.from(new Set(mints));
+    const solMints = unique.filter((m) => !this.isEvmAddress(m));
+    const evmMints = unique.filter((m) => this.isEvmAddress(m));
+
+    // Solana — batched via the per-token endpoint, which returns one deduped
+    // pool per address (no global pair cap). Kept exactly as before so existing
+    // trending/leaderboard MC is unchanged.
     const CHUNK = 30;
-    for (let i = 0; i < unique.length; i += CHUNK) {
-      const slice = unique.slice(i, i + CHUNK);
+    for (let i = 0; i < solMints.length; i += CHUNK) {
+      const slice = solMints.slice(i, i + CHUNK);
       try {
-        // Chain-agnostic endpoint — returns pairs for these addresses across
-        // every chain (Solana + EVM), so mixed-chain call lists resolve in one
-        // request. `baseToken.address` is normalized to match how we store it.
         const r = await fetch(
-          `https://api.dexscreener.com/latest/dex/tokens/${slice.join(',')}`,
+          `https://api.dexscreener.com/tokens/v1/solana/${slice.join(',')}`,
         );
-        const data = await r.json();
-        const pairs: any[] = data?.pairs ?? [];
-        for (const pair of pairs) {
-          const addr = pair?.baseToken?.address
-            ? this.normalizeAddress(pair.baseToken.address)
-            : null;
+        const pairs: any[] = await r.json();
+        for (const pair of pairs || []) {
+          const addr = pair?.baseToken?.address;
           const fdv = pair?.fdv ?? 0;
           if (!addr) continue;
           // Keep the largest FDV across pools for the same mint.
@@ -1146,6 +1225,30 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
         /* best effort */
       }
     }
+
+    // EVM — one request per token. A single popular token can have >30 pools,
+    // so the batch endpoint hits DexScreener's global 30-pair cap and silently
+    // drops tokens; per-token keeps each lookup accurate and chain-agnostic.
+    for (const mint of evmMints) {
+      try {
+        const r = await fetch(
+          `https://api.dexscreener.com/latest/dex/tokens/${mint}`,
+        );
+        const data = await r.json();
+        const pairs: any[] = data?.pairs ?? [];
+        let max = 0;
+        for (const pair of pairs) {
+          if (this.normalizeAddress(pair?.baseToken?.address ?? '') !== mint)
+            continue;
+          const fdv = pair?.fdv ?? 0;
+          if (fdv > max) max = fdv;
+        }
+        if (max > 0) out.set(mint, max);
+      } catch {
+        /* best effort */
+      }
+    }
+
     return out;
   }
 
@@ -1381,16 +1484,21 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     const helius = heliusRes.status === 'fulfilled' ? heliusRes.value : null;
     const rug = rugRes.status === 'fulfilled' ? rugRes.value : null;
 
-    // Pick the most liquid pair. For an EVM address DexScreener may return pairs
-    // for the same token across several chains — restrict to the one the token
-    // actually trades on (whichever has the deepest liquidity).
+    // Pick the most liquid pair.
+    // - Solana: keep the original behavior (most-liquid of all returned pairs).
+    // - EVM: strictly match the requested contract as the pair's base token AND
+    //   a supported chain. DexScreener returns unrelated pairs for bogus/zero
+    //   addresses, so without this a junk 0x… could render a wrong-token card.
     const allPairs: any[] = ds?.pairs ?? [];
-    const pairs = isEvm
-      ? allPairs.filter((p: any) =>
-          SolanaService.EVM_CHAINS[p?.chainId ?? ''] ? true : false,
+    const wanted = this.normalizeAddress(mint);
+    const candidatePairs = isEvm
+      ? allPairs.filter(
+          (p: any) =>
+            !!SolanaService.EVM_CHAINS[p?.chainId ?? ''] &&
+            this.normalizeAddress(p?.baseToken?.address ?? '') === wanted,
         )
-      : allPairs.filter((p: any) => (p?.chainId ?? 'solana') === 'solana');
-    const pair = (pairs.length ? pairs : allPairs).sort(
+      : allPairs;
+    const pair = candidatePairs.sort(
       (a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0),
     )[0];
 
@@ -1408,6 +1516,19 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
 
     const chain: string = pair.chainId ?? (isEvm ? 'ethereum' : 'solana');
     const evmMeta = SolanaService.EVM_CHAINS[chain];
+
+    // EVM enrichment (image + security) — the EVM analogue of Helius image +
+    // RugCheck. Both are free/keyless and best-effort; a miss just omits data.
+    let evmImage: string | null = null;
+    let evmSecurityLine = '';
+    if (evmMeta) {
+      const [imgRes, secRes] = await Promise.allSettled([
+        this.fetchEvmTokenImage(evmMeta.gecko, mint),
+        this.fetchEvmSecurityLine(evmMeta.bullxId, mint),
+      ]);
+      evmImage = imgRes.status === 'fulfilled' ? imgRes.value : null;
+      evmSecurityLine = secRes.status === 'fulfilled' ? secRes.value : '';
+    }
 
     const token = pair.baseToken ?? {};
     const name = token.name || helius?.result?.content?.metadata?.name || '???';
@@ -1431,11 +1552,12 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
         ? mc / price
         : 0;
 
-    // Image
+    // Image — Helius (Solana) → DexScreener → GeckoTerminal (EVM fallback).
     const imageUrl: string | null =
       helius?.result?.content?.links?.image ||
       helius?.result?.content?.files?.[0]?.uri ||
       pair.info?.imageUrl ||
+      evmImage ||
       null;
 
     const fmt = (n: number) =>
@@ -1497,7 +1619,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
         `├ Dev Sold   ${devSold ? '🟢 Yes' : '🔴 No'}\n` +
         `├ DEX Paid   ${dexPaid ? '🟢 Yes' : '🔴 No'}\n` +
         `└ <a href="${rugLink}">Full report on RugCheck</a>`
-      : '';
+      : evmSecurityLine;
     const socials: any[] = pair.info?.socials ?? [];
     const websites: any[] = pair.info?.websites ?? [];
     const twitter = socials.find((s: any) => s.type === 'twitter')?.url ?? null;
