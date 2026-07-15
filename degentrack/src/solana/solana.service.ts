@@ -492,6 +492,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       explorer: string;
       bullxId: string; // also used as the GoPlus chain id
       gecko: string; // GeckoTerminal network slug (token images)
+      moralis: string; // Moralis chain slug (EVM data fallback)
       gmgn?: string;
       honeypot?: string;
     }
@@ -502,6 +503,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       explorer: 'https://etherscan.io',
       bullxId: '1',
       gecko: 'eth',
+      moralis: 'eth',
       gmgn: 'eth',
       honeypot: 'ethereum',
     },
@@ -511,6 +513,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       explorer: 'https://bscscan.com',
       bullxId: '56',
       gecko: 'bsc',
+      moralis: 'bsc',
       gmgn: 'bsc',
       honeypot: 'bsc',
     },
@@ -520,6 +523,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       explorer: 'https://basescan.org',
       bullxId: '8453',
       gecko: 'base',
+      moralis: 'base',
       gmgn: 'base',
       honeypot: 'base',
     },
@@ -529,6 +533,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       explorer: 'https://arbiscan.io',
       bullxId: '42161',
       gecko: 'arbitrum',
+      moralis: 'arbitrum',
     },
   };
 
@@ -619,6 +624,81 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     } catch {
       return '';
     }
+  }
+
+  /**
+   * Moralis EVM token lookup — the Helius equivalent for EVM chains. Used as a
+   * FALLBACK when DexScreener has no pair yet (fresh BSC meme tokens are the
+   * common case: they trade on PancakeSwap minutes before aggregators index
+   * them). Probes all supported chains in parallel — a contract only has
+   * liquidity on one — and picks the hit. Needs MORALIS_API_KEY; returns null
+   * without it or on any miss.
+   */
+  private async fetchEvmTokenViaMoralis(mint: string): Promise<{
+    chain: string;
+    name: string;
+    symbol: string;
+    price: number;
+    marketCap: number;
+    liquidity: number;
+    change24h: number;
+    imageUrl: string | null;
+    dex: string;
+  } | null> {
+    const key = this.config.get<string>('MORALIS_API_KEY', '');
+    if (!key) return null;
+    const headers = { accept: 'application/json', 'X-API-Key': key };
+    const base = 'https://deep-index.moralis.io/api/v2.2';
+
+    const probes = await Promise.allSettled(
+      Object.entries(SolanaService.EVM_CHAINS).map(async ([chain, meta]) => {
+        const r = await fetch(
+          `${base}/erc20/${mint}/price?chain=${meta.moralis}&include=percent_change`,
+          { headers },
+        );
+        if (!r.ok) throw new Error(`moralis ${r.status}`);
+        const d = await r.json();
+        const price = Number(d?.usdPrice ?? 0);
+        if (!(price > 0)) throw new Error('no price');
+        return { chain, meta, d, price };
+      }),
+    );
+    const hit = probes.find((p) => p.status === 'fulfilled');
+    if (!hit || hit.status !== 'fulfilled') return null;
+    const { chain, meta, d, price } = hit.value;
+
+    // Supply / FDV from token metadata (best effort — price alone still makes
+    // a useful card).
+    let marketCap = 0;
+    let metaLogo: string | null = null;
+    try {
+      const r = await fetch(
+        `${base}/erc20/metadata?chain=${meta.moralis}&addresses%5B0%5D=${mint}`,
+        { headers },
+      );
+      if (r.ok) {
+        const arr = await r.json();
+        const m = Array.isArray(arr) ? arr[0] : null;
+        const fdv = parseFloat(m?.fully_diluted_valuation ?? '0') || 0;
+        const supply = parseFloat(m?.total_supply_formatted ?? '0') || 0;
+        marketCap = fdv > 0 ? fdv : supply * price;
+        metaLogo = m?.logo || null;
+      }
+    } catch {
+      /* best effort */
+    }
+
+    return {
+      chain,
+      name: d?.tokenName || '???',
+      symbol: d?.tokenSymbol || '???',
+      price,
+      marketCap,
+      liquidity: Number(d?.pairTotalLiquidityUsd ?? 0),
+      change24h: Number(d?.['24hrPercentChange'] ?? 0),
+      imageUrl: d?.tokenLogo || metaLogo || null,
+      dex: d?.exchangeName || '',
+    };
   }
 
   // ─── Cached SOL Price ────────────────────────────────────────────────────────
@@ -1243,7 +1323,14 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
           const fdv = pair?.fdv ?? 0;
           if (fdv > max) max = fdv;
         }
-        if (max > 0) out.set(mint, max);
+        if (max > 0) {
+          out.set(mint, max);
+        } else {
+          // DexScreener hasn't indexed it yet — Moralis fallback keeps
+          // first-caller gains / trending MC live for fresh EVM tokens.
+          const m = await this.fetchEvmTokenViaMoralis(mint).catch(() => null);
+          if (m && m.marketCap > 0) out.set(mint, m.marketCap);
+        }
       } catch {
         /* best effort */
       }
@@ -1498,9 +1585,32 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
             this.normalizeAddress(p?.baseToken?.address ?? '') === wanted,
         )
       : allPairs;
-    const pair = candidatePairs.sort(
+    let pair = candidatePairs.sort(
       (a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0),
     )[0];
+
+    // EVM fallback: DexScreener often lags on brand-new BSC/ETH meme tokens.
+    // Moralis (like Helius, but for EVM) resolves chain + price + supply
+    // directly, so fresh tokens still get a card. We synthesize a pair-shaped
+    // object so the rest of the card pipeline works unchanged.
+    if (!pair && isEvm) {
+      const m = await this.fetchEvmTokenViaMoralis(mint).catch(() => null);
+      if (m) {
+        this.logger.log(`Moralis fallback hit for ${mint} on ${m.chain}`);
+        pair = {
+          chainId: m.chain,
+          baseToken: { address: mint, name: m.name, symbol: m.symbol },
+          priceUsd: String(m.price),
+          fdv: m.marketCap,
+          volume: { h24: 0 },
+          liquidity: { usd: m.liquidity },
+          priceChange: { h1: 0, h24: m.change24h },
+          dexId: m.dex,
+          pairAddress: '',
+          info: { imageUrl: m.imageUrl },
+        };
+      }
+    }
 
     if (!pair) {
       return {
