@@ -781,6 +781,65 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  // Last-resort on-chain metadata lookup for chains no aggregator covers yet.
+  // Blockscout's /api/v2/tokens/{address} is a standard API across the new
+  // L2s; add entries here as your users' communities pick up new chains.
+  private static readonly BLOCKSCOUT_FALLBACKS: {
+    chain: string;
+    name: string;
+    explorer: string;
+  }[] = [
+    {
+      chain: 'robinhood',
+      name: 'Robinhood',
+      explorer: 'https://robinhoodchain.blockscout.com',
+    },
+  ];
+
+  /**
+   * Probes Blockscout explorers for token METADATA (name/symbol/supply/
+   * holders). No price — this fires only when DexScreener AND Moralis both
+   * miss, i.e. the token is so fresh no aggregator has indexed its pool.
+   * Lets the card say "token exists, too new for price" instead of failing.
+   */
+  private async fetchEvmTokenViaBlockscout(mint: string): Promise<{
+    chain: string;
+    chainName: string;
+    name: string;
+    symbol: string;
+    supply: number;
+    holders: number;
+    tokenUrl: string;
+    imageUrl: string | null;
+  } | null> {
+    const probes = await Promise.allSettled(
+      SolanaService.BLOCKSCOUT_FALLBACKS.map(async (b) => {
+        const r = await fetch(`${b.explorer}/api/v2/tokens/${mint}`, {
+          headers: { accept: 'application/json' },
+        });
+        if (!r.ok) throw new Error(`${r.status}`);
+        const d = await r.json();
+        if (!d?.name && !d?.symbol) throw new Error('no metadata');
+        const decimals = parseInt(d?.decimals ?? '18', 10) || 18;
+        const supply = d?.total_supply
+          ? Number(BigInt(d.total_supply) / BigInt(10) ** BigInt(decimals))
+          : 0;
+        return {
+          chain: b.chain,
+          chainName: b.name,
+          name: d?.name ?? '???',
+          symbol: d?.symbol ?? '???',
+          supply,
+          holders: parseInt(d?.holders_count ?? '0', 10) || 0,
+          tokenUrl: `${b.explorer}/token/${mint}`,
+          imageUrl: d?.icon_url || null,
+        };
+      }),
+    );
+    const hit = probes.find((p) => p.status === 'fulfilled');
+    return hit && hit.status === 'fulfilled' ? hit.value : null;
+  }
+
   // ─── EVM Wallet Watching (Moralis polling) ───────────────────────────────────
   //
   // Helius gives Solana a free WebSocket; Moralis has no free equivalent, so
@@ -2145,6 +2204,44 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (!pair) {
+      // Final EVM fallback: on-chain metadata from Blockscout explorers of
+      // chains no aggregator covers yet. "Token exists, too new for price"
+      // beats a flat error for brand-new launches.
+      if (isEvm) {
+        const bs = await this.fetchEvmTokenViaBlockscout(mint).catch(
+          () => null,
+        );
+        if (bs) {
+          this.logger.log(`Blockscout fallback hit for ${mint} (${bs.chain})`);
+          const supplyFmt =
+            bs.supply >= 1_000_000_000
+              ? `${(bs.supply / 1_000_000_000).toFixed(2)}B`
+              : bs.supply >= 1_000_000
+                ? `${(bs.supply / 1_000_000).toFixed(2)}M`
+                : bs.supply.toLocaleString();
+          const text =
+            `🪙 <b>${bs.name}</b> (<b>$${bs.symbol}</b>)\n` +
+            `🔘 <b>${bs.chainName}</b> · <a href="${bs.tokenUrl}">Explorer</a>\n` +
+            `<code>${mint}</code>\n` +
+            `━━━━━━━━━━━━━━━━━━━━\n` +
+            `📊 <b>On-chain data</b>\n` +
+            `├ Supply   <b>${supplyFmt}</b>\n` +
+            `└ Holders  <b>${bs.holders.toLocaleString()}</b>\n` +
+            `━━━━━━━━━━━━━━━━━━━━\n` +
+            `⚠️ <i>Token found on-chain, but no DEX aggregator has indexed a ` +
+            `liquidity pool yet — price and market cap unavailable. Very new ` +
+            `token: trade with extreme caution. Hit 🔄 Refresh later.</i>`;
+          return {
+            text,
+            imageUrl: bs.imageUrl,
+            symbol: bs.symbol,
+            name: bs.name,
+            price: 0,
+            marketCap: 0,
+            chain: bs.chain,
+          };
+        }
+      }
       return {
         text: `❌ No trading data found for this token.\n\nThis address may not be a tradeable token, or it has no active liquidity pool on any DEX yet.`,
         imageUrl: null,
@@ -2305,6 +2402,28 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
         ? `${chainDot} ${chainDisplayName}`
         : '◎ Solana';
 
+    // ATH row — peak MC tracked since the token was first called anywhere on
+    // this bot (TokenPeak, refreshed every 5 min). Skipped for tokens never
+    // called. Current MC can exceed the stored peak between poller runs, so
+    // clamp: ATH is never displayed below the live MC.
+    let athLine = '';
+    try {
+      const peakRow = await this.prisma.tokenPeak.findUnique({
+        where: { mint },
+        select: { peakMcUsd: true },
+      });
+      if (peakRow && peakRow.peakMcUsd > 0 && mc > 0) {
+        const athMc = Math.max(peakRow.peakMcUsd, mc);
+        const status =
+          mc >= athMc * 0.98
+            ? '🔥 at ATH'
+            : `↓${(((athMc - mc) / athMc) * 100).toFixed(0)}% from ATH`;
+        athLine = `├ ATH    <b>${fmt(athMc)}</b>  ·  ${status}\n`;
+      }
+    } catch {
+      /* no peak data — omit the row */
+    }
+
     const text =
       `🪙 <b>${name}</b> (<b>$${symbol}</b>)\n` +
       chainLine +
@@ -2313,6 +2432,7 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       `📊 <b>Stats</b>\n` +
       `├ USD    <b>${fmtPrice(price)}</b>\n` +
       `├ MC     <b>${fmt(mc)}</b>\n` +
+      athLine +
       `├ Vol    <b>${fmt(vol24)}</b>\n` +
       `├ LP     <b>${fmt(liq)}</b>\n` +
       `├ Sup    <b>${supplyFmt}</b>\n` +
