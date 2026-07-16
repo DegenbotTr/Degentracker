@@ -1,26 +1,33 @@
 import Link from "next/link";
 import type { Bot } from "@/lib/bots";
 
-const accentMap: Record<Bot["accent"], { glow: string; dot: string; ring: string }> = {
+const accentMap: Record<
+  Bot["accent"],
+  { glow: string; dot: string; ring: string; title: string }
+> = {
   green: {
     glow: "from-emerald-400/20 via-emerald-400/5 to-transparent",
     dot: "bg-emerald-400",
     ring: "group-hover:ring-emerald-400/40",
+    title: "text-emerald-300",
   },
   purple: {
     glow: "from-violet-500/20 via-violet-500/5 to-transparent",
     dot: "bg-violet-400",
     ring: "group-hover:ring-violet-400/40",
+    title: "text-violet-300",
   },
   amber: {
     glow: "from-amber-400/20 via-amber-400/5 to-transparent",
     dot: "bg-amber-400",
     ring: "group-hover:ring-amber-400/40",
+    title: "text-amber-300",
   },
   cyan: {
     glow: "from-cyan-400/20 via-cyan-400/5 to-transparent",
     dot: "bg-cyan-400",
     ring: "group-hover:ring-cyan-400/40",
+    title: "text-cyan-300",
   },
 };
 
@@ -43,11 +50,19 @@ export function BotCard({ bot }: { bot: Bot }) {
       />
 
       <div className="relative flex items-center justify-between">
-        <span className="inline-flex items-center gap-2 rounded-full border border-border bg-black/40 px-2.5 py-1 text-[10px] font-medium uppercase tracking-wider text-zinc-300">
+        <span
+          className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${
+            bot.status === "live"
+              ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
+              : "border-border bg-black/40 text-zinc-300"
+          }`}
+        >
           <span
             className={`h-1.5 w-1.5 rounded-full ${accent.dot} ${bot.status === "live" ? "pulse-dot" : ""}`}
           />
-          {statusLabel[bot.status]}
+          <span className={bot.status === "live" ? "blink-live" : ""}>
+            {statusLabel[bot.status]}
+          </span>
         </span>
         <span className="text-[10px] font-medium uppercase tracking-widest text-muted">
           {bot.chain}
@@ -55,7 +70,7 @@ export function BotCard({ bot }: { bot: Bot }) {
       </div>
 
       <div className="relative mt-6">
-        <h3 className="text-lg font-semibold text-white">{bot.name}</h3>
+        <h3 className={`text-lg font-semibold ${accent.title}`}>{bot.name}</h3>
         <p className="mt-1 text-xs font-medium uppercase tracking-widest text-muted">
           {bot.category}
         </p>
@@ -65,9 +80,9 @@ export function BotCard({ bot }: { bot: Bot }) {
         {bot.tagline}
       </p>
 
-      <div className="relative mt-8 flex items-center justify-between">
-        <span className="text-xs text-muted">View details</span>
-        <span className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-black/40 text-zinc-300 transition-transform group-hover:translate-x-0.5 group-hover:text-white">
+      <div className="relative mt-8 flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 transition-colors group-hover:border-white/25 group-hover:bg-white/10">
+        <span className="text-sm font-semibold text-white">View details</span>
+        <span className="flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-black/40 text-white transition-transform group-hover:translate-x-0.5">
           <svg
             viewBox="0 0 24 24"
             className="h-3.5 w-3.5"

@@ -67,11 +67,17 @@ export default async function BotDetailPage(props: PageProps<"/bots/[slug]">) {
                 <span className="text-border">•</span>
                 <span className="text-muted">{bot.chain}</span>
                 <span className="text-border">•</span>
-                <span className="inline-flex items-center gap-1.5 text-muted">
+                <span
+                  className={`inline-flex items-center gap-1.5 ${
+                    bot.status === "live" ? "text-emerald-300" : "text-muted"
+                  }`}
+                >
                   <span
                     className={`h-1.5 w-1.5 rounded-full bg-emerald-400 ${bot.status === "live" ? "pulse-dot" : ""}`}
                   />
-                  {statusLabel[bot.status]}
+                  <span className={bot.status === "live" ? "blink-live" : ""}>
+                    {statusLabel[bot.status]}
+                  </span>
                 </span>
               </div>
               <h1 className="mt-3 text-4xl font-semibold tracking-tight text-white sm:text-5xl">

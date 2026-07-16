@@ -96,6 +96,20 @@ body {
   animation: pulse-dot 1.8s ease-in-out infinite;
 }
 
+@keyframes blink-live {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.blink-live {
+  animation: blink-live 1.2s ease-in-out infinite;
+}
+
 @keyframes marquee {
   from {
     transform: translateX(0);
