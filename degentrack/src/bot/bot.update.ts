@@ -47,6 +47,18 @@ const pendingLabelAddress = new Map<number, string>();
 const pendingTagAddress = new Map<number, string>();
 const pendingWalletMinsizeAddress = new Map<number, string>();
 
+// Leaderboard time windows (hours) — rendered as two button rows.
+const LB_WINDOWS = [
+  { hours: 12, label: '12H' },
+  { hours: 24, label: '1D' },
+  { hours: 168, label: '1W' },
+  { hours: 336, label: '2W' },
+  { hours: 720, label: '1M' },
+  { hours: 2160, label: '3M' },
+  { hours: 4320, label: '6M' },
+] as const;
+const LB_DEFAULT_HOURS = 336; // 2W, like the classic call-tracker default
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function isGroup(ctx: Context): boolean {
@@ -209,8 +221,8 @@ export class BotUpdate {
           `• <code>/list</code> — see all watched wallets\n\n` +
           `<b>Group alpha</b>\n` +
           `• Paste any CA — <b>Solana</b> or <b>EVM</b> (ETH · BSC · Base · Arbitrum) — I'll show token info and record who called it first\n` +
-          `• <code>/trending</code> — most-called tokens in this group\n` +
-          `• <code>/leaderboard</code> — top callers by call performance\n\n` +
+          `• <code>/trending</code> (or <code>/tr</code>) — most-called tokens in this group\n` +
+          `• <code>/leaderboard</code> (or <code>/lb</code>) — top callers, ATH multipliers & stats\n\n` +
           `ℹ️ Solana alerts are instant; EVM alerts arrive within a few minutes. Portfolio/PnL are Solana-only.`,
         { parse_mode: 'HTML' },
       );
@@ -436,51 +448,20 @@ export class BotUpdate {
     }
     const loading = await ctx.reply('⏳ Scoring callers...');
     try {
-      const board = await this.solanaService.getGroupLeaderboard(ctx.chat.id);
-      if (board.length === 0) {
-        await ctx.telegram.editMessageText(
-          ctx.chat.id,
-          (loading as any).message_id,
-          undefined,
-          `📊 <b>Leaderboard</b>\n\nNo scored calls yet. Paste a token CA in this group and I'll start tracking who called what.`,
-          { parse_mode: 'HTML' },
-        );
-        return;
-      }
-
-      const top = board.slice(0, 10);
-      const groupName = (ctx.chat as any)?.title ?? 'this group';
-
-      const rows = top.map((c, i) => {
-        const rank =
-          i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : ` ${i + 1}.`;
-        const handle = c.username ? `@${c.username}` : `user ${c.callerId}`;
-        const peakEmoji = c.avgPeakGainPct >= 0 ? '🟢' : '🔴';
-        const peakSign = c.avgPeakGainPct >= 0 ? '+' : '';
-        const nowSign = c.avgNowGainPct >= 0 ? '+' : '';
-        const bestSign = c.bestPeakGainPct >= 0 ? '+' : '';
-        const winPct = (c.winRate * 100).toFixed(0);
-        return (
-          `${rank} <b>${handle}</b>\n` +
-          `   📞 ${c.calls} call${c.calls !== 1 ? 's' : ''}  ·  ` +
-          `${peakEmoji} avg peak <b>${peakSign}${c.avgPeakGainPct.toFixed(1)}%</b>  ·  ` +
-          `now <b>${nowSign}${c.avgNowGainPct.toFixed(1)}%</b>\n` +
-          `   🏆 best <b>${bestSign}${c.bestPeakGainPct.toFixed(1)}%</b>  ·  ` +
-          `🎯 2x rate <b>${winPct}%</b>`
-        );
-      });
-
-      const text =
-        `📊 <b>Caller Leaderboard</b>\n└ ${groupName}\n\n` +
-        rows.join('\n\n') +
-        `\n\n<i>Ranked by average peak % gain since call. "now" is current MC. Only first-callers of a token get credit.</i>`;
-
+      const { text, keyboard } = await this.buildLeaderboardView(
+        ctx,
+        LB_DEFAULT_HOURS,
+      );
       await ctx.telegram.editMessageText(
         ctx.chat.id,
         (loading as any).message_id,
         undefined,
         text,
-        { parse_mode: 'HTML', disable_web_page_preview: true } as any,
+        {
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+          reply_markup: keyboard,
+        } as any,
       );
     } catch (err) {
       await ctx.telegram.editMessageText(
@@ -491,6 +472,105 @@ export class BotUpdate {
         { parse_mode: 'HTML' },
       );
     }
+  }
+
+  /** Shortcut: /lb == /leaderboard */
+  @Command('lb')
+  async onLb(@Ctx() ctx: Context): Promise<void> {
+    return this.onLeaderboard(ctx);
+  }
+
+  /** Shortcut: /tr == /trending */
+  @Command('tr')
+  async onTr(@Ctx() ctx: Context): Promise<void> {
+    return this.onTrending(ctx);
+  }
+
+  // Re-render the leaderboard for a different time window (button taps).
+  @Action(/^lb:(\d+)$/)
+  async onLeaderboardWindow(@Ctx() ctx: Context): Promise<void> {
+    const hours = parseInt((ctx as any).match[1], 10) || LB_DEFAULT_HOURS;
+    try {
+      const { text, keyboard } = await this.buildLeaderboardView(ctx, hours);
+      await ctx.editMessageText(text, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+        reply_markup: keyboard,
+      } as any);
+      await ctx.answerCbQuery().catch(() => {});
+    } catch {
+      // "message is not modified" (same window tapped twice) and friends.
+      await ctx.answerCbQuery().catch(() => {});
+    }
+  }
+
+  private async buildLeaderboardView(
+    ctx: Context,
+    hours: number,
+  ): Promise<{ text: string; keyboard: InlineKeyboardMarkup }> {
+    const groupName = (ctx.chat as any)?.title ?? 'this group';
+    const windowLabel =
+      LB_WINDOWS.find((w) => w.hours === hours)?.label ?? `${hours}H`;
+    const keyboard: InlineKeyboardMarkup = {
+      inline_keyboard: [
+        LB_WINDOWS.slice(0, 4).map((w) => ({
+          text: (w.hours === hours ? '✅ ' : '') + w.label,
+          callback_data: `lb:${w.hours}`,
+        })),
+        LB_WINDOWS.slice(4).map((w) => ({
+          text: (w.hours === hours ? '✅ ' : '') + w.label,
+          callback_data: `lb:${w.hours}`,
+        })),
+      ],
+    };
+
+    const data = await this.solanaService.getLeaderboardV2(ctx.chat.id, hours);
+    if (!data) {
+      return {
+        text:
+          `🏆 <b>${groupName}</b> [${windowLabel}]\n\n` +
+          `No scored calls in this window. Paste a token CA in this group and I'll start tracking who called what.`,
+        keyboard,
+      };
+    }
+
+    const xFmt = (x: number) => (x >= 10 ? x.toFixed(0) : x.toFixed(1)) + 'x';
+    const handle = (u: string, id: number) => (u ? `@${u}` : `user ${id}`);
+    const botUsername = process.env.BOT_USERNAME ?? '';
+
+    // 👑 Top callers by points (gained multiples across their calls)
+    const topCallers = data.callers.slice(0, 5);
+    const callerLines = topCallers
+      .map((c, i) => {
+        const branch = i === topCallers.length - 1 ? '└' : '├';
+        return `${branch} <b>${handle(c.username, c.callerId)}</b> — ${c.pts.toFixed(2)} pts`;
+      })
+      .join('\n');
+
+    // Ranked token calls by ATH multiplier
+    const badges = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+    const tokenLines = data.tokens
+      .slice(0, 10)
+      .map((t, i) => {
+        const sym = botUsername
+          ? `<a href="https://t.me/${botUsername}?start=token_${t.mint}">$${t.symbol}</a>`
+          : `$${t.symbol}`;
+        return `${badges[i]} ${sym} — ${handle(t.username, t.callerId)} [<b>${xFmt(t.multiplier)}</b>]`;
+      })
+      .join('\n');
+
+    const text =
+      `🏆 <b>${groupName}</b> [${windowLabel}]\n\n` +
+      `👑 <b>Top Callers</b>\n${callerLines}\n\n` +
+      `${tokenLines}\n\n` +
+      `📊 <b>Statistics</b>\n` +
+      `├ Calls:      <b>${data.totalCalls}</b>\n` +
+      `├ Hit Rate:   <b>${(data.hitRate * 100).toFixed(1)}%</b>  <i>(≥2x)</i>\n` +
+      `├ Median:     <b>${xFmt(data.medianX)}</b>\n` +
+      `└ Return:     <b>${xFmt(data.bestX)}</b>  (Avg: ${xFmt(data.avgX)})\n\n` +
+      `<i>[x] = ATH multiplier since call. First caller of a token gets the credit. pts = gained multiples across calls.</i>`;
+
+    return { text, keyboard };
   }
 
   @Command('trending')
@@ -1523,17 +1603,31 @@ export class BotUpdate {
             ? `user ${first.callerId}`
             : '<i>unknown caller</i>';
         const timeAgo = this.humanTimeAgo(first.calledAt);
-        const detailLine =
-          first.mcAtCall > 0 && marketCap > 0
-            ? (() => {
-                const gainPct =
-                  ((marketCap - first.mcAtCall) / first.mcAtCall) * 100;
-                const gainEmoji = gainPct >= 0 ? '🟢' : '🔴';
-                const gainSign = gainPct >= 0 ? '+' : '';
-                return `└ MC then: <b>${this.fmtCompactUsd(first.mcAtCall)}</b>  ·  now <b>${this.fmtCompactUsd(marketCap)}</b>  ·  ${gainEmoji} <b>${gainSign}${gainPct.toFixed(1)}%</b>  ·  <i>${timeAgo}</i>`;
-              })()
-            : `└ <i>${timeAgo}</i>`;
-        firstCallerNote = `🎯 <b>${label} ${handle}</b>\n` + detailLine;
+
+        // ATH since call — from the TokenPeak tracker (seeded at call time,
+        // refreshed every 5 min). Shown as the classic [x] multiplier.
+        const ath = await this.solanaService
+          .getTokenAth(mint)
+          .catch(() => null);
+        const hasDetail = first.mcAtCall > 0 && marketCap > 0;
+        const detailLine = hasDetail
+          ? (() => {
+              const gainPct =
+                ((marketCap - first.mcAtCall) / first.mcAtCall) * 100;
+              const gainEmoji = gainPct >= 0 ? '🟢' : '🔴';
+              const gainSign = gainPct >= 0 ? '+' : '';
+              const tree = ath ? '├' : '└';
+              return `${tree} MC then: <b>${this.fmtCompactUsd(first.mcAtCall)}</b>  ·  now <b>${this.fmtCompactUsd(marketCap)}</b>  ·  ${gainEmoji} <b>${gainSign}${gainPct.toFixed(1)}%</b>  ·  <i>${timeAgo}</i>`;
+            })()
+          : `${ath ? '├' : '└'} <i>${timeAgo}</i>`;
+        let athLine = '';
+        if (ath && first.mcAtCall > 0) {
+          const x = ath.peakMcUsd / first.mcAtCall;
+          const xStr = (x >= 10 ? x.toFixed(0) : x.toFixed(1)) + 'x';
+          athLine = `\n└ ⚡ ATH <b>${this.fmtCompactUsd(ath.peakMcUsd)}</b>  ·  [<b>${xStr}</b>] since call`;
+        }
+        firstCallerNote =
+          `🎯 <b>${label} ${handle}</b>\n` + detailLine + athLine;
       }
 
       if (opts.recordCall) {

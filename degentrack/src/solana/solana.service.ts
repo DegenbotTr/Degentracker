@@ -1125,6 +1125,9 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       { text: '⚡ Trojan', url: trojanUrl },
       { text: '🐂 BullX', url: bullxUrl },
       { text: '⚛️ Photon', url: photonUrl },
+      // Pump.fun's swap trades ANY Solana token now (not just pump launches) —
+      // /coin/{mint} is a live trade page with connected-wallet buying.
+      { text: '💊 Pump', url: `https://pump.fun/coin/${mint}` },
     ];
 
     const researchRow: { text: string; url: string }[] = [
@@ -1570,6 +1573,46 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
         mcAtCall: caller?.mcAtCall ?? 0,
       },
     });
+
+    // Seed the ATH tracker right away — the 5-min peak poller would otherwise
+    // leave a gap where a freshly-called token has no TokenPeak row yet.
+    const mc = caller?.mcAtCall ?? 0;
+    if (mc > 0) {
+      const now = new Date();
+      await this.prisma.tokenPeak
+        .upsert({
+          where: { mint },
+          create: {
+            mint,
+            peakMcUsd: mc,
+            peakAt: now,
+            lastCheckedAt: now,
+            lastMcUsd: mc,
+          },
+          update: { lastCheckedAt: now, lastMcUsd: mc },
+        })
+        .catch(() => {});
+      // Bump peak only if this call's MC exceeds it (separate call because
+      // upsert can't do conditional max updates).
+      await this.prisma.tokenPeak
+        .updateMany({
+          where: { mint, peakMcUsd: { lt: mc } },
+          data: { peakMcUsd: mc, peakAt: now },
+        })
+        .catch(() => {});
+    }
+  }
+
+  /** ATH (peak market cap) recorded for a mint since it was first called. */
+  async getTokenAth(
+    mint: string,
+  ): Promise<{ peakMcUsd: number; peakAt: Date } | null> {
+    const row = await this.prisma.tokenPeak.findUnique({
+      where: { mint },
+      select: { peakMcUsd: true, peakAt: true, lastMcUsd: true },
+    });
+    if (!row || row.peakMcUsd <= 0) return null;
+    return { peakMcUsd: row.peakMcUsd, peakAt: row.peakAt };
   }
 
   /**
@@ -1805,6 +1848,154 @@ export class SolanaService implements OnModuleInit, OnModuleDestroy {
       .sort((a, b) => b.avgPeakGainPct - a.avgPeakGainPct);
 
     return results;
+  }
+
+  /**
+   * TokenScan-style leaderboard data for a time window. Multipliers are
+   * ATH-based: peak MC since the call ÷ MC at call. Only the first caller of
+   * each mint (within the window) gets credit; anonymous first calls poison
+   * their mint like in getGroupLeaderboard.
+   */
+  async getLeaderboardV2(
+    groupId: number,
+    windowHours: number,
+  ): Promise<{
+    totalCalls: number;
+    tokens: {
+      mint: string;
+      symbol: string;
+      callerId: number;
+      username: string;
+      mcAtCall: number;
+      peakMc: number;
+      multiplier: number;
+    }[];
+    callers: {
+      callerId: number;
+      username: string;
+      pts: number;
+      calls: number;
+    }[];
+    hitRate: number; // fraction of calls that reached ≥2x
+    medianX: number;
+    bestX: number;
+    avgX: number;
+  } | null> {
+    const since = new Date(Date.now() - windowHours * 60 * 60 * 1000);
+    const rows = await this.prisma.groupTokenCall.findMany({
+      where: { groupId, calledAt: { gte: since } },
+      orderBy: { calledAt: 'asc' },
+      select: {
+        callerId: true,
+        callerUsername: true,
+        mint: true,
+        symbol: true,
+        mcAtCall: true,
+      },
+    });
+    if (rows.length === 0) return null;
+
+    const firstPerMint = new Map<
+      string,
+      {
+        callerId: bigint;
+        username: string;
+        mcAtCall: number;
+        symbol: string;
+      }
+    >();
+    for (const r of rows) {
+      if (firstPerMint.has(r.mint)) continue;
+      firstPerMint.set(r.mint, {
+        callerId: r.callerId,
+        username: r.callerUsername,
+        mcAtCall: r.mcAtCall,
+        symbol: r.symbol,
+      });
+    }
+    // Only scoreable calls: known caller + recorded MC.
+    for (const [mint, v] of firstPerMint) {
+      if (v.callerId === BigInt(0) || v.mcAtCall <= 0)
+        firstPerMint.delete(mint);
+    }
+    if (firstPerMint.size === 0) return null;
+
+    const mints = Array.from(firstPerMint.keys());
+    const peaks = await this.prisma.tokenPeak.findMany({
+      where: { mint: { in: mints } },
+      select: { mint: true, peakMcUsd: true, lastMcUsd: true },
+    });
+    const peakByMint = new Map<string, number>();
+    for (const p of peaks)
+      peakByMint.set(p.mint, Math.max(p.peakMcUsd, p.lastMcUsd));
+    const missing = mints.filter((m) => !peakByMint.has(m));
+    if (missing.length > 0) {
+      const liveMcs = await this.getCurrentMarketCaps(missing);
+      for (const [m, mc] of liveMcs) peakByMint.set(m, mc);
+    }
+
+    const tokens: {
+      mint: string;
+      symbol: string;
+      callerId: number;
+      username: string;
+      mcAtCall: number;
+      peakMc: number;
+      multiplier: number;
+    }[] = [];
+    for (const [mint, first] of firstPerMint) {
+      const peak = peakByMint.get(mint) ?? 0;
+      if (peak <= 0) continue;
+      tokens.push({
+        mint,
+        symbol: first.symbol || `${mint.slice(0, 4)}...${mint.slice(-4)}`,
+        callerId: Number(first.callerId),
+        username: first.username,
+        mcAtCall: first.mcAtCall,
+        peakMc: peak,
+        multiplier: peak / first.mcAtCall,
+      });
+    }
+    if (tokens.length === 0) return null;
+    tokens.sort((a, b) => b.multiplier - a.multiplier);
+
+    // Caller points: sum of gained multiples (x − 1, floored at 0) across
+    // their calls. A 5x call = 4 pts; a rug (<1x) = 0 pts, never negative.
+    const byCaller = new Map<
+      number,
+      { username: string; pts: number; calls: number }
+    >();
+    for (const t of tokens) {
+      const e = byCaller.get(t.callerId) ?? {
+        username: t.username,
+        pts: 0,
+        calls: 0,
+      };
+      e.pts += Math.max(t.multiplier - 1, 0);
+      e.calls += 1;
+      if (!e.username && t.username) e.username = t.username;
+      byCaller.set(t.callerId, e);
+    }
+    const callers = Array.from(byCaller.entries())
+      .map(([callerId, v]) => ({ callerId, ...v }))
+      .sort((a, b) => b.pts - a.pts);
+
+    const xs = tokens.map((t) => t.multiplier).sort((a, b) => a - b);
+    const medianX =
+      xs.length % 2
+        ? xs[(xs.length - 1) / 2]
+        : (xs[xs.length / 2 - 1] + xs[xs.length / 2]) / 2;
+    const hits = xs.filter((x) => x >= 2).length;
+
+    return {
+      totalCalls: tokens.length,
+      tokens,
+      callers,
+      hitRate: hits / xs.length,
+      medianX,
+      bestX: xs[xs.length - 1],
+      avgX: xs.reduce((s, x) => s + x, 0) / xs.length,
+    };
   }
 
   async getTrendingTokens(
